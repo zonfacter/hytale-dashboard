@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hytale Dashboard - Verwaltung</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <h1>Hytale Server Dashboard</h1>
+      <nav class="nav">
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/manage" class="nav-link active">Verwaltung</a>
+      </nav>
+    </div>
+    <div class="meta">Service: <code>{{ service }}</code> &middot; Server: <code>{{ server_dir }}</code></div>
+  </header>
+
+  <main>
+    <!-- Players -->
+    <section class="card card-wide">
+      <h2>Spieler</h2>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Status</th><th>Letzter Login</th><th>Welt</th></tr>
+          </thead>
+          <tbody id="playerTable">
+            <tr><td colspan="4" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Console -->
+    <section class="card card-wide" id="consoleCard" {% if not allow_control %}hidden{% endif %}>
+      <h2>Server-Konsole</h2>
+      <pre id="consoleOutput" class="console-output">Lade...</pre>
+      <div class="console-input-row">
+        <input type="text" id="consoleInput" class="console-input" placeholder="Befehl eingeben..." autocomplete="off" />
+        <button id="consoleSend" class="btn-control">Senden</button>
+      </div>
+      <details class="command-ref">
+        <summary class="muted">Befehlsreferenz</summary>
+        <div class="command-list">
+          <code>help</code> <code>save</code> <code>stop</code> <code>time</code>
+          <code>whitelist</code> <code>say</code> <code>gamemode</code> <code>tp</code> <code>kick</code>
+        </div>
+      </details>
+    </section>
+
+    <!-- Config Editor -->
+    <section class="card card-wide" id="configCard" {% if not allow_control %}hidden{% endif %}>
+      <h2>Konfiguration</h2>
+      <div class="config-tabs">
+        <button class="tab-btn active" data-tab="serverConfig">Server Config</button>
+        <button class="tab-btn" data-tab="worldConfig">World Config</button>
+      </div>
+      <div id="serverConfigTab" class="tab-content active">
+        <textarea id="serverConfigEditor" class="config-editor" spellcheck="false"></textarea>
+      </div>
+      <div id="worldConfigTab" class="tab-content">
+        <textarea id="worldConfigEditor" class="config-editor" spellcheck="false"></textarea>
+      </div>
+      <div class="actions">
+        <button id="saveConfig" class="btn-control">Speichern</button>
+        <span id="configHint" class="muted" hidden>Server-Neustart erforderlich</span>
+      </div>
+    </section>
+
+    <!-- Backup Management -->
+    <section class="card card-wide">
+      <h2>Backup-Verwaltung</h2>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Datei</th><th>Groesse</th><th>Datum</th><th>Typ</th>{% if allow_control %}<th>Aktionen</th>{% endif %}</tr>
+          </thead>
+          <tbody id="backupMgmtTable">
+            <tr><td colspan="5" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Mod Management -->
+    <section class="card card-wide" id="modCard">
+      <h2>Mods</h2>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Status</th><th>Groesse</th>{% if allow_control %}<th>Aktionen</th>{% endif %}</tr>
+          </thead>
+          <tbody id="modTable">
+            <tr><td colspan="4" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      {% if allow_control %}
+      <div class="actions">
+        <label class="btn-control upload-btn">
+          Mod hochladen (.zip)
+          <input type="file" id="modUpload" accept=".zip" hidden />
+        </label>
+      </div>
+      {% endif %}
+    </section>
+  </main>
+
+  <footer>
+    <small>User: {{ user }}</small>
+  </footer>
+
+  <script src="/static/manage.js"></script>
+</body>
+</html>

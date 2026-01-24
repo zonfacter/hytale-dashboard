@@ -1,0 +1,25 @@
+[Unit]
+Description=Hytale Dashboard (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hytale-web
+Group=hytale-web
+WorkingDirectory=/opt/hytale-dashboard
+Environment=PORT=8088
+Environment=BIND=0.0.0.0
+Environment=HYTALE_SERVICE=hytale
+Environment=HYTALE_DIR=/opt/hytale-server
+Environment=BACKUP_DIR=/opt/hytale-server/backups
+Environment=DASH_USER=admin
+Environment=DASH_PASS=change-me
+Environment=ALLOW_CONTROL=true
+
+ExecStart=/opt/hytale-dashboard/.venv/bin/uvicorn app:app --host ${BIND} --port ${PORT}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hytale Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <h1>Hytale Server Dashboard</h1>
+      <nav class="nav">
+        <a href="/" class="nav-link active">Dashboard</a>
+        <a href="/manage" class="nav-link">Verwaltung</a>
+      </nav>
+    </div>
+    <div class="meta">Service: <code>{{ service }}</code> &middot; Backups: <code>{{ backup_dir }}</code></div>
+  </header>
+
+  <main>
+    <!-- Server Status -->
+    <section class="card" id="statusCard">
+      <h2>Server Status</h2>
+      <div id="serverStatus" class="kv">
+        <div class="loading">Lade...</div>
+      </div>
+      <div class="actions" id="serverActions" {% if not allow_control %}hidden{% endif %}>
+        <button data-action="start" class="btn-control">Start</button>
+        <button data-action="stop" class="btn-control btn-danger">Stop</button>
+        <button data-action="restart" class="btn-control btn-warn">Restart</button>
+      </div>
+    </section>
+
+    <!-- Version / Update -->
+    <section class="card" id="versionCard">
+      <h2>Version</h2>
+      <div id="versionInfo" class="kv">
+        <div class="loading">Lade...</div>
+      </div>
+      <div class="actions" id="versionActions" {% if not allow_control %}hidden{% endif %}>
+        <button id="checkVersion" class="btn-control">Version pruefen</button>
+        <button id="runUpdate" class="btn-control btn-warn" hidden>Jetzt aktualisieren</button>
+        <button id="toggleAutoUpdate" class="btn-control" hidden>Nach Backup aktualisieren</button>
+      </div>
+      <span id="versionHint" class="muted" hidden></span>
+      <pre id="updateLog" class="update-log" hidden></pre>
+    </section>
+
+    <!-- Disk Usage -->
+    <section class="card">
+      <h2>Disk Usage</h2>
+      <div id="diskInfo" class="kv">
+        <div class="loading">Lade...</div>
+      </div>
+      <div id="diskBar" class="disk-bar-container" hidden>
+        <div class="disk-bar-fill" id="diskBarFill"></div>
+        <span class="disk-bar-label" id="diskBarLabel"></span>
+      </div>
+    </section>
+
+    <!-- Backups -->
+    <section class="card card-wide">
+      <h2>Backups</h2>
+      <div id="backupSummary" class="kv">
+        <div class="loading">Lade...</div>
+      </div>
+      <div class="actions" id="backupActions" {% if not allow_control %}hidden{% endif %}>
+        <button id="runBackup" class="btn-control">Backup jetzt ausführen</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Datei</th><th>Groesse</th><th>Zeitpunkt</th></tr>
+          </thead>
+          <tbody id="backupTable">
+            <tr><td colspan="3" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Einstellungen -->
+    <section class="card" id="settingsCard" {% if not allow_control %}hidden{% endif %}>
+      <h2>Einstellungen</h2>
+      <div class="setting-row">
+        <label for="backupFrequency">Auto-Backup Frequenz:</label>
+        <select id="backupFrequency">
+          <option value="0">Deaktiviert</option>
+          <option value="30">Alle 30 Minuten</option>
+          <option value="60">Jede Stunde</option>
+          <option value="120">Alle 2 Stunden</option>
+          <option value="360">Alle 6 Stunden</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button id="saveSettings" class="btn-control">Speichern</button>
+        <span id="settingsHint" class="muted" hidden>Server wird neugestartet...</span>
+      </div>
+    </section>
+
+    <!-- Logs -->
+    <section class="card card-wide">
+      <h2>Logs <span class="muted">(journalctl -u hytale -n 150)</span></h2>
+      <div class="actions">
+        <button id="refreshLogs">Refresh</button>
+        <label class="toggle-label">
+          <input type="checkbox" id="autoScroll" checked /> Auto-Scroll
+        </label>
+      </div>
+      <pre id="logs" class="logs">Lade Logs...</pre>
+    </section>
+  </main>
+
+  <footer>
+    <small>Polling: 5s &middot; Zugangsschutz: HTTP Basic Auth &middot; User: {{ user }}</small>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
