@@ -2,6 +2,16 @@
 
 Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/Ubuntu).
 
+## Screenshots
+
+### Dashboard (Hauptseite)
+![Dashboard](docs/dashboard.png)
+
+### Verwaltung (Management-Seite)
+![Verwaltung](docs/manage.png)
+
+---
+
 ## Features
 
 ### Dashboard (Hauptseite `/`)
