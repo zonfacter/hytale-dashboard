@@ -160,7 +160,7 @@ sudo usermod -aG systemd-journal hytale-web
 sudo mkdir -p /opt/hytale-dashboard
 sudo chown hytale-web:hytale-web /opt/hytale-dashboard
 cd /opt/hytale-dashboard
-git clone https://github.com/DEIN_USER/hytale-dashboard.git .
+git clone https://github.com/zonfacter/hytale-dashboard.git .
 ```
 
 ### 3. Python Virtual Environment
