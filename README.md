@@ -140,7 +140,58 @@ Wichtige Flags:
 - `--backup-frequency 60`: Backup-Intervall in Minuten
 - `--backup-dir backups`: Backup-Verzeichnis
 
-### 7. Firewall konfigurieren
+### 7. Server-Konfiguration (`config.json`)
+
+Die Hauptkonfiguration des Servers liegt in `/opt/hytale-server/config.json`:
+
+```json
+{
+  "Version": 3,
+  "ServerName": "Hytale Server",
+  "MOTD": "",
+  "Password": "",
+  "MaxPlayers": 100,
+  "MaxViewRadius": 32,
+  "Defaults": {
+    "World": "default",
+    "GameMode": "Adventure"
+  },
+  "PlayerStorage": {
+    "Type": "Hytale"
+  },
+  "AuthCredentialStore": {
+    "Type": "Encrypted",
+    "Path": "auth.enc"
+  }
+}
+```
+
+Wichtige Einstellungen:
+- `ServerName`: Name des Servers (wird Spielern angezeigt)
+- `Password`: Server-Passwort (leer = kein Passwort)
+- `MaxPlayers`: Maximale Spieleranzahl
+- `MaxViewRadius`: Sichtweite in Chunks
+- `Defaults.GameMode`: Standard-Spielmodus (`Adventure`, `Creative`, etc.)
+
+### 8. Authentifizierung und Credentials (`auth.enc`)
+
+Der Hytale-Server speichert Authentifizierungs-Credentials verschluesselt in der Datei `auth.enc`. Diese wird automatisch erstellt und verwaltet.
+
+```
+/opt/hytale-server/auth.enc       (verschluesselte Auth-Daten)
+```
+
+**Wichtig:**
+- Die Datei `auth.enc` wird beim ersten Start oder Login automatisch erstellt
+- Sie enthaelt die verschluesselten OAuth-Credentials fuer den Server
+- Bei der Erstinstallation muss einmalig eine Authentifizierung ueber den Browser erfolgen
+- Die Credentials werden dann verschluesselt gespeichert und automatisch erneuert
+- **Niemals `auth.enc` manuell bearbeiten oder loeschen** (sonst ist Re-Authentifizierung noetig)
+- Die Datei hat restriktive Berechtigungen (`600`) und gehoert dem `hytale`-User
+
+Das Update-Script (`hytale-update.sh`) bewahrt `auth.enc` bei Updates automatisch.
+
+### 9. Firewall konfigurieren
 
 ```bash
 sudo ufw allow 5520/udp comment "Hytale Server"
@@ -422,6 +473,16 @@ ls -la /opt/hytale-server/.console_pipe
    ```
 4. **User-Isolation**: Dashboard laeuft als eigener User (`hytale-web`), nicht als root oder `hytale`.
 5. **Minimale Sudo-Rechte**: Nur die benoetigten systemctl-Befehle und das Update-Script.
+
+---
+
+## Credits
+
+Dieses Projekt wurde vollstaendig von **Claude Opus 4.5** (Anthropic) entwickelt und programmiert.
+
+**[zonfacter](https://github.com/zonfacter)** hat das Projekt konzipiert, die Anforderungen definiert und Claude bei der Entwicklung angeleitet.
+
+Der gesamte Code - Backend (FastAPI/Python), Frontend (HTML/CSS/JavaScript), Systemd-Services, Update-Scripts und Dokumentation - wurde von der KI generiert.
 
 ---
 
