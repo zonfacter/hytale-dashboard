@@ -184,6 +184,83 @@
     });
   }
 
+  // --- Plugin Store ---
+  async function refreshPlugins() {
+    const data = await api("/api/plugins");
+    if (!data) return;
+    const tbody = el("pluginTable");
+    const plugins = data.plugins || [];
+    if (plugins.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Keine Plugins verfuegbar</td></tr>';
+      return;
+    }
+    tbody.innerHTML = plugins.map(p => {
+      let statusBadge, actionBtn;
+      if (p.installed && p.enabled) {
+        statusBadge = '<span class="badge badge-active">Installiert</span>';
+        actionBtn = '-';
+      } else if (p.installed && !p.enabled) {
+        statusBadge = '<span class="badge badge-inactive">Deaktiviert</span>';
+        actionBtn = '-';
+      } else {
+        statusBadge = '<span class="badge badge-muted">Nicht installiert</span>';
+        actionBtn = `<button class="btn-install" data-id="${p.id}">Installieren</button>`;
+      }
+      const deps = p.depends ? `<br><small class="muted">Abh.: ${p.depends.join(", ")}</small>` : "";
+      return `<tr>
+        <td><strong>${p.name}</strong></td>
+        <td>${p.description}${deps}</td>
+        <td>${p.version}</td>
+        <td>${statusBadge}</td>
+        <td>${actionBtn}</td>
+      </tr>`;
+    }).join("");
+
+    // Install handlers
+    tbody.querySelectorAll(".btn-install").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        btn.textContent = "Installiere...";
+        const result = await api(`/api/plugins/${encodeURIComponent(id)}/install`, { method: "POST" });
+        if (result && result.ok) {
+          toast(`Plugin '${result.plugin}' installiert. Server-Neustart erforderlich.`);
+          await refreshPlugins();
+          await refreshMods();
+          await refreshQuery();
+        } else {
+          btn.disabled = false;
+          btn.textContent = "Installieren";
+        }
+      });
+    });
+  }
+
+  // --- Server Query (Nitrado) ---
+  async function refreshQuery() {
+    const statusDiv = el("queryStatus");
+    const dataDiv = el("queryData");
+    if (!statusDiv || !dataDiv) return;
+
+    const data = await api("/api/server/query");
+    if (!data) return;
+
+    if (!data.available) {
+      statusDiv.textContent = data.reason || "Nicht verfuegbar";
+      statusDiv.hidden = false;
+      dataDiv.hidden = true;
+      return;
+    }
+
+    statusDiv.hidden = true;
+    dataDiv.hidden = false;
+
+    const q = data.data || {};
+    el("queryPlayers").textContent = q.players_online ?? "-";
+    el("queryMaxPlayers").textContent = q.max_players ?? "-";
+    el("queryTps").textContent = q.tps ? q.tps.toFixed(1) : "-";
+  }
+
   // --- Mod Management ---
   async function refreshMods() {
     const data = await api("/api/mods");
@@ -269,12 +346,15 @@
       loadConfigs(),
       refreshBackups(),
       refreshMods(),
+      refreshPlugins(),
+      refreshQuery(),
     ]);
 
-    // Poll players and console
+    // Poll players, console, and query
     setInterval(async () => {
       await refreshPlayers();
       await refreshConsole();
+      await refreshQuery();
     }, 10000);
   }
 

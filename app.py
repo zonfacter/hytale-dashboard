@@ -744,6 +744,19 @@ async def api_mod_upload(request: Request, user: str = Depends(verify_credential
     if not content:
         raise HTTPException(status_code=400, detail="Leere Datei.")
 
+    filename = file.filename or "mod"
+    is_jar = filename.lower().endswith(".jar")
+
+    if is_jar:
+        # JAR file: create directory with mod name and put JAR inside
+        mod_name = Path(filename).stem
+        mod_dir = MODS_DIR / mod_name
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        jar_path = mod_dir / filename
+        jar_path.write_bytes(content)
+        return {"ok": True, "mod_name": mod_name}
+
+    # ZIP file handling
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
@@ -762,7 +775,7 @@ async def api_mod_upload(request: Request, user: str = Depends(verify_credential
                 mod_name = top_dirs.pop()
                 extract_to = MODS_DIR
             else:
-                mod_name = Path(file.filename).stem
+                mod_name = Path(filename).stem
                 extract_to = MODS_DIR / mod_name
                 extract_to.mkdir(parents=True, exist_ok=True)
 
@@ -773,3 +786,159 @@ async def api_mod_upload(request: Request, user: str = Depends(verify_credential
         os.unlink(tmp_path)
 
     return {"ok": True, "mod_name": mod_name}
+
+
+# ---------------------------------------------------------------------------
+# Plugin Store
+# ---------------------------------------------------------------------------
+PLUGIN_STORE = [
+    {
+        "id": "nitrado-webserver",
+        "name": "Nitrado:WebServer",
+        "description": "Base plugin for web applications and APIs. Required by Query and PrometheusExporter.",
+        "version": "1.0.0",
+        "author": "Nitrado",
+        "url": "https://github.com/nitrado/hytale-plugin-webserver/releases/download/v1.0.0/nitrado-webserver-1.0.0.jar",
+        "dir_name": "Nitrado_WebServer",
+        "config_port": 5523,
+    },
+    {
+        "id": "nitrado-query",
+        "name": "Nitrado:Query",
+        "description": "Exposes server status (player counts, TPS, etc.) via HTTP API.",
+        "version": "1.0.1",
+        "author": "Nitrado",
+        "url": "https://github.com/nitrado/hytale-plugin-query/releases/download/v1.0.1/nitrado-query-1.0.1.jar",
+        "dir_name": "Nitrado_Query",
+        "depends": ["nitrado-webserver"],
+    },
+    {
+        "id": "nitrado-performance-saver",
+        "name": "Nitrado:PerformanceSaver",
+        "description": "Dynamically limits view distance based on resource usage.",
+        "version": "1.1.0",
+        "author": "Nitrado",
+        "url": "https://github.com/nitrado/hytale-plugin-performance-saver/releases/download/v1.1.0/nitrado-performance-saver-1.1.0.jar",
+        "dir_name": "Nitrado_PerformanceSaver",
+    },
+    {
+        "id": "apexhosting-prometheus",
+        "name": "ApexHosting:PrometheusExporter",
+        "description": "Exposes detailed server and JVM metrics for Prometheus monitoring.",
+        "version": "1.0.0",
+        "author": "ApexHosting",
+        "url": "https://github.com/apexhosting/hytale-plugin-prometheus/releases/download/v1.0.0/apexhosting-prometheusexporter-1.0.0.jar",
+        "dir_name": "ApexHosting_PrometheusExporter",
+        "depends": ["nitrado-webserver"],
+    },
+]
+
+
+@app.get("/api/plugins")
+async def api_plugins(user: str = Depends(verify_credentials)):
+    """List available plugins from the store with install status."""
+    result = []
+    for plugin in PLUGIN_STORE:
+        installed = False
+        enabled = False
+        dir_name = plugin["dir_name"]
+        if (MODS_DIR / dir_name).exists():
+            installed = True
+            enabled = True
+        elif (MODS_DIR / f"{dir_name}.disabled").exists():
+            installed = True
+            enabled = False
+        result.append({
+            **plugin,
+            "installed": installed,
+            "enabled": enabled,
+        })
+    return JSONResponse({"plugins": result})
+
+
+@app.post("/api/plugins/{plugin_id}/install")
+async def api_plugin_install(plugin_id: str, user: str = Depends(verify_credentials)):
+    """Download and install a plugin from the store."""
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+
+    plugin = next((p for p in PLUGIN_STORE if p["id"] == plugin_id), None)
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Plugin nicht gefunden.")
+
+    # Check dependencies
+    depends = plugin.get("depends", [])
+    for dep_id in depends:
+        dep = next((p for p in PLUGIN_STORE if p["id"] == dep_id), None)
+        if dep:
+            dep_dir = MODS_DIR / dep["dir_name"]
+            if not dep_dir.exists() and not (MODS_DIR / f"{dep['dir_name']}.disabled").exists():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Abhaengigkeit fehlt: {dep['name']}. Bitte zuerst installieren."
+                )
+
+    import urllib.request
+
+    dir_name = plugin["dir_name"]
+    mod_dir = MODS_DIR / dir_name
+
+    if mod_dir.exists() or (MODS_DIR / f"{dir_name}.disabled").exists():
+        raise HTTPException(status_code=400, detail="Plugin bereits installiert.")
+
+    try:
+        jar_name = plugin["url"].split("/")[-1]
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        jar_path = mod_dir / jar_name
+
+        def download():
+            urllib.request.urlretrieve(plugin["url"], str(jar_path))
+
+        await asyncio.to_thread(download)
+    except Exception as e:
+        if mod_dir.exists():
+            shutil.rmtree(mod_dir)
+        raise HTTPException(status_code=500, detail=f"Download fehlgeschlagen: {e}")
+
+    return {"ok": True, "plugin": plugin["name"]}
+
+
+@app.get("/api/server/query")
+async def api_server_query(user: str = Depends(verify_credentials)):
+    """Get server status from Nitrado Query API (if installed)."""
+    query_dir = MODS_DIR / "Nitrado_Query"
+    webserver_dir = MODS_DIR / "Nitrado_WebServer"
+
+    if not query_dir.exists() or not webserver_dir.exists():
+        return JSONResponse({"available": False, "reason": "Nitrado:Query oder Nitrado:WebServer nicht installiert."})
+
+    # Read WebServer config to get port
+    config_path = webserver_dir / "config.json"
+    port = 5523  # default: game port (5520) + 3
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            port = cfg.get("port", port)
+        except Exception:
+            pass
+
+    try:
+        import urllib.request
+        import ssl
+
+        # Skip SSL verification for self-signed cert
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        url = f"https://127.0.0.1:{port}/Nitrado/Query"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+
+        def fetch():
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                return json.loads(resp.read().decode())
+
+        data = await asyncio.to_thread(fetch)
+        return JSONResponse({"available": True, "data": data})
+    except Exception as e:
+        return JSONResponse({"available": False, "reason": str(e)})

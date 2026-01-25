@@ -107,6 +107,7 @@ main {
 .badge-inactive { background: rgba(138,149,165,0.15); color: var(--muted); }
 .badge-failed { background: rgba(239,68,68,0.15); color: var(--red); }
 .badge-update { background: rgba(59,130,246,0.15); color: var(--accent); }
+.badge-muted { background: rgba(255,255,255,0.05); color: var(--muted); }
 
 /* Disk Bar */
 .disk-bar-container {
@@ -346,3 +347,41 @@ footer {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Stat Grid (Query) */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.stat {
+  text-align: center;
+  padding: 12px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+}
+.stat-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.stat-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Plugin Install Button */
+.btn-install {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-install:hover { background: #4f94f8; }
+.btn-install:disabled { background: var(--muted); cursor: wait; }

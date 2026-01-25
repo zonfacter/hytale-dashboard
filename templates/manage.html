@@ -85,6 +85,35 @@
       </div>
     </section>
 
+    <!-- Plugin Store -->
+    <section class="card card-wide" id="pluginStoreCard">
+      <h2>Plugin Store</h2>
+      <p class="muted">Empfohlene Plugins fuer erweiterte Funktionen. Erfordern Server-Neustart nach Installation.</p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Plugin</th><th>Beschreibung</th><th>Version</th><th>Status</th>{% if allow_control %}<th>Aktion</th>{% endif %}</tr>
+          </thead>
+          <tbody id="pluginTable">
+            <tr><td colspan="5" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Server Query (Nitrado) -->
+    <section class="card" id="queryCard">
+      <h2>Server Query</h2>
+      <div id="queryStatus" class="muted">Lade...</div>
+      <div id="queryData" hidden>
+        <div class="stat-grid">
+          <div class="stat"><span class="stat-label">Spieler</span><span id="queryPlayers" class="stat-value">-</span></div>
+          <div class="stat"><span class="stat-label">Max</span><span id="queryMaxPlayers" class="stat-value">-</span></div>
+          <div class="stat"><span class="stat-label">TPS</span><span id="queryTps" class="stat-value">-</span></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Mod Management -->
     <section class="card card-wide" id="modCard">
       <h2>Mods</h2>
@@ -101,8 +130,8 @@
       {% if allow_control %}
       <div class="actions">
         <label class="btn-control upload-btn">
-          Mod hochladen (.zip)
-          <input type="file" id="modUpload" accept=".zip" hidden />
+          Mod hochladen (.zip/.jar)
+          <input type="file" id="modUpload" accept=".zip,.jar" hidden />
         </label>
       </div>
       {% endif %}

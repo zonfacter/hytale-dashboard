@@ -372,7 +372,57 @@ Alle Einstellungen erfolgen ueber Environment-Variablen in der systemd Unit-Date
 | GET | `/api/mods` | Mod-Liste |
 | POST | `/api/mods/{name}/toggle` | Mod aktivieren/deaktivieren |
 | DELETE | `/api/mods/{name}` | Mod loeschen |
-| POST | `/api/mods/upload` | Mod hochladen (.zip) |
+| POST | `/api/mods/upload` | Mod hochladen (.zip/.jar) |
+| GET | `/api/plugins` | Plugin Store (verfuegbare Plugins) |
+| POST | `/api/plugins/{id}/install` | Plugin installieren |
+| GET | `/api/server/query` | Server-Status via Nitrado Query |
+
+---
+
+## Plugin Store
+
+Das Dashboard enthaelt einen integrierten Plugin Store mit empfohlenen Plugins:
+
+| Plugin | Beschreibung | Autor |
+|--------|--------------|-------|
+| **Nitrado:WebServer** | Base plugin fuer Web-APIs. Voraussetzung fuer Query und PrometheusExporter. | [Nitrado](https://github.com/nitrado/hytale-plugin-webserver) |
+| **Nitrado:Query** | Stellt Server-Status (Spieleranzahl, TPS, etc.) via HTTP API bereit. | [Nitrado](https://github.com/nitrado/hytale-plugin-query) |
+| **Nitrado:PerformanceSaver** | Passt Sichtweite dynamisch an Ressourcenverbrauch an. | [Nitrado](https://github.com/nitrado/hytale-plugin-performance-saver) |
+| **ApexHosting:PrometheusExporter** | Exportiert Server- und JVM-Metriken fuer Prometheus Monitoring. | [ApexHosting](https://github.com/apexhosting/hytale-plugin-prometheus) |
+
+### Installation via Dashboard
+
+1. Oeffne die Verwaltungsseite (`/manage`)
+2. Scrolle zum "Plugin Store" Bereich
+3. Klicke "Installieren" beim gewuenschten Plugin
+4. Nach der Installation: **Server neu starten**
+
+### Abhaengigkeiten
+
+- `Nitrado:Query` und `ApexHosting:PrometheusExporter` benoetigen `Nitrado:WebServer`
+- Installiere zuerst `WebServer`, dann die abhaengigen Plugins
+
+### WebServer Konfiguration
+
+Nach Installation von `Nitrado:WebServer` wird ein HTTPS-Server auf Port 5523 (Spielport +3) gestartet.
+
+Konfiguration anpassen unter `mods/Nitrado_WebServer/config.json`:
+
+```json
+{
+  "port": 5523,
+  "tls": true
+}
+```
+
+### Query API Nutzung
+
+Wenn `Nitrado:Query` installiert ist, zeigt das Dashboard automatisch Live-Daten:
+- Aktuelle Spieleranzahl
+- Maximale Spieleranzahl
+- Server TPS (Ticks per Second)
+
+Die API ist erreichbar unter: `https://SERVER:5523/Nitrado/Query`
 
 ---
 
