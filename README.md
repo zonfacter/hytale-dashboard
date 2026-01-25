@@ -28,6 +28,7 @@ Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/
 - **Konfiguration**: Server Config und World Config live editieren (JSON)
 - **Backup-Verwaltung**: Backups anzeigen, loeschen
 - **Mod-Verwaltung**: Mods auflisten, aktivieren/deaktivieren, loeschen, hochladen (.zip)
+- **CurseForge Integration**: Mods direkt aus CurseForge suchen und installieren
 
 ### Allgemein
 - Dark-Theme UI
@@ -314,6 +315,7 @@ Alle Einstellungen erfolgen ueber Environment-Variablen in der systemd Unit-Date
 | `DASH_USER` | `admin` | Basic Auth Benutzername |
 | `DASH_PASS` | `change-me` | Basic Auth Passwort |
 | `ALLOW_CONTROL` | `true` | Steuerfunktionen aktivieren |
+| `CF_API_KEY` | *(leer)* | CurseForge API Key (fuer Mod-Browser) |
 
 ---
 
@@ -423,6 +425,73 @@ Wenn `Nitrado:Query` installiert ist, zeigt das Dashboard automatisch Live-Daten
 - Server TPS (Ticks per Second)
 
 Die API ist erreichbar unter: `https://SERVER:5523/Nitrado/Query`
+
+---
+
+## CurseForge Integration
+
+Das Dashboard bietet eine direkte Integration mit [CurseForge](https://www.curseforge.com/hytale), der offiziellen Mod-Plattform fuer Hytale.
+
+### Features
+
+- **Mod-Browser**: Durchsuche alle verfuegbaren Hytale Mods auf CurseForge
+- **Suche**: Finde Mods nach Namen
+- **Versionsauswahl**: Zeigt alle verfuegbaren Versionen eines Mods
+- **Ein-Klick-Installation**: Installiert Mods direkt in den `mods/` Ordner
+
+### API Key einrichten
+
+Die CurseForge API erfordert einen API Key. Diesen erhaeltst du kostenlos:
+
+1. Registriere dich bei [CurseForge](https://www.curseforge.com/)
+2. Oeffne die [Developer Console](https://console.curseforge.com/)
+3. Erstelle ein neues Projekt/eine neue App
+4. Generiere einen API Key unter "API Keys"
+
+### Konfiguration
+
+Fuege den API Key zur Dashboard-Konfiguration hinzu:
+
+```bash
+sudo systemctl edit hytale-dashboard.service
+```
+
+```ini
+[Service]
+Environment=CF_API_KEY=DEIN_API_KEY_HIER
+```
+
+Danach Service neu starten:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart hytale-dashboard
+```
+
+### Nutzung
+
+1. Oeffne die Verwaltungsseite (`/manage`)
+2. Scrolle zum "CurseForge Mods" Bereich
+3. Nutze die Suche oder browse durch die Mods
+4. Klicke auf "Details" um Versionen anzuzeigen
+5. Waehle eine Version und klicke "Installieren"
+6. **Server neu starten** nach der Installation
+
+### API-Endpunkte
+
+| Methode | Pfad | Beschreibung |
+|---------|------|--------------|
+| GET | `/api/curseforge/status` | CurseForge Verbindungsstatus |
+| GET | `/api/curseforge/search` | Mods suchen |
+| GET | `/api/curseforge/mod/{id}` | Mod-Details und Dateien |
+| POST | `/api/curseforge/install/{mod_id}/{file_id}` | Mod installieren |
+
+### Hinweise
+
+- Mods werden als JAR-Dateien direkt in `/opt/hytale-server/mods/` installiert
+- Hytale laedt nur JAR-Dateien aus dem Root des `mods/` Ordners
+- Nach jeder Mod-Installation ist ein Server-Neustart erforderlich
+- Einige Mods haben Abhaengigkeiten (z.B. Vault Library) - diese zuerst installieren
 
 ---
 

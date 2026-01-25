@@ -21,6 +21,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 DASH_USER = os.environ.get("DASH_USER", "admin")
 DASH_PASS = os.environ.get("DASH_PASS", "changeme")
 ALLOW_CONTROL = os.environ.get("ALLOW_CONTROL", "false").lower() == "true"
+CF_API_KEY = os.environ.get("CF_API_KEY", "")  # CurseForge API Key
 
 SERVICE_NAME = "hytale.service"
 BACKUP_DIR = Path("/opt/hytale-server/backups")
@@ -841,11 +842,20 @@ async def api_plugins(user: str = Depends(verify_credentials)):
     for plugin in PLUGIN_STORE:
         installed = False
         enabled = False
+        # Check for JAR file in mods/ root (new method)
+        jar_name = plugin["url"].split("/")[-1]
+        jar_base = jar_name.replace(".jar", "")
+        jars = list(MODS_DIR.glob(f"{jar_base.split('-')[0]}*.jar"))
+        disabled_jars = list(MODS_DIR.glob(f"{jar_base.split('-')[0]}*.jar.disabled"))
+        # Also check for old-style directory installation (backwards compat)
         dir_name = plugin["dir_name"]
-        if (MODS_DIR / dir_name).exists():
+        dir_exists = (MODS_DIR / dir_name).exists()
+        dir_disabled = (MODS_DIR / f"{dir_name}.disabled").exists()
+
+        if jars or dir_exists:
             installed = True
             enabled = True
-        elif (MODS_DIR / f"{dir_name}.disabled").exists():
+        elif disabled_jars or dir_disabled:
             installed = True
             enabled = False
         result.append({
@@ -866,13 +876,14 @@ async def api_plugin_install(plugin_id: str, user: str = Depends(verify_credenti
     if not plugin:
         raise HTTPException(status_code=404, detail="Plugin nicht gefunden.")
 
-    # Check dependencies
+    # Check dependencies by looking for JAR files
     depends = plugin.get("depends", [])
     for dep_id in depends:
         dep = next((p for p in PLUGIN_STORE if p["id"] == dep_id), None)
         if dep:
-            dep_dir = MODS_DIR / dep["dir_name"]
-            if not dep_dir.exists() and not (MODS_DIR / f"{dep['dir_name']}.disabled").exists():
+            dep_jar_pattern = dep["url"].split("/")[-1].replace(".jar", "*.jar")
+            dep_jars = list(MODS_DIR.glob(dep_jar_pattern.split("-")[0] + "-*.jar"))
+            if not dep_jars:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Abhaengigkeit fehlt: {dep['name']}. Bitte zuerst installieren."
@@ -880,24 +891,31 @@ async def api_plugin_install(plugin_id: str, user: str = Depends(verify_credenti
 
     import urllib.request
 
-    dir_name = plugin["dir_name"]
-    mod_dir = MODS_DIR / dir_name
+    jar_name = plugin["url"].split("/")[-1]
+    jar_path = MODS_DIR / jar_name
+    disabled_jar_path = MODS_DIR / f"{jar_name}.disabled"
 
-    if mod_dir.exists() or (MODS_DIR / f"{dir_name}.disabled").exists():
+    # Check if already installed (JAR in root or in subdirectory for backwards compat)
+    if jar_path.exists() or disabled_jar_path.exists():
+        raise HTTPException(status_code=400, detail="Plugin bereits installiert.")
+    dir_name = plugin["dir_name"]
+    if (MODS_DIR / dir_name).exists() or (MODS_DIR / f"{dir_name}.disabled").exists():
         raise HTTPException(status_code=400, detail="Plugin bereits installiert.")
 
     try:
-        jar_name = plugin["url"].split("/")[-1]
-        mod_dir.mkdir(parents=True, exist_ok=True)
-        jar_path = mod_dir / jar_name
-
+        # Download JAR directly to mods/ root (not in subdirectory)
         def download():
             urllib.request.urlretrieve(plugin["url"], str(jar_path))
 
         await asyncio.to_thread(download)
+
+        # Create config directory if plugin has config_port setting
+        if "config_port" in plugin:
+            config_dir = MODS_DIR / dir_name
+            config_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        if mod_dir.exists():
-            shutil.rmtree(mod_dir)
+        if jar_path.exists():
+            jar_path.unlink()
         raise HTTPException(status_code=500, detail=f"Download fehlgeschlagen: {e}")
 
     return {"ok": True, "plugin": plugin["name"]}
@@ -906,14 +924,15 @@ async def api_plugin_install(plugin_id: str, user: str = Depends(verify_credenti
 @app.get("/api/server/query")
 async def api_server_query(user: str = Depends(verify_credentials)):
     """Get server status from Nitrado Query API (if installed)."""
-    query_dir = MODS_DIR / "Nitrado_Query"
-    webserver_dir = MODS_DIR / "Nitrado_WebServer"
+    # Check for plugin JAR files (they can be either in root or subdirectories)
+    query_jar = list(MODS_DIR.glob("nitrado-query*.jar"))
+    webserver_jar = list(MODS_DIR.glob("nitrado-webserver*.jar"))
 
-    if not query_dir.exists() or not webserver_dir.exists():
+    if not query_jar or not webserver_jar:
         return JSONResponse({"available": False, "reason": "Nitrado:Query oder Nitrado:WebServer nicht installiert."})
 
-    # Read WebServer config to get port
-    config_path = webserver_dir / "config.json"
+    # Read WebServer config to get port (config is in Nitrado_WebServer folder)
+    config_path = MODS_DIR / "Nitrado_WebServer" / "config.json"
     port = 5523  # default: game port (5520) + 3
     if config_path.exists():
         try:
@@ -942,3 +961,188 @@ async def api_server_query(user: str = Depends(verify_credentials)):
         return JSONResponse({"available": True, "data": data})
     except Exception as e:
         return JSONResponse({"available": False, "reason": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# CurseForge Integration
+# ---------------------------------------------------------------------------
+CF_API_BASE = "https://api.curseforge.com/v1"
+CF_HYTALE_GAME_ID = None  # Will be discovered dynamically
+
+
+async def cf_request(endpoint: str, params: dict = None) -> dict:
+    """Make a request to the CurseForge API."""
+    import urllib.request
+    import urllib.parse
+
+    if not CF_API_KEY:
+        raise HTTPException(status_code=500, detail="CurseForge API Key nicht konfiguriert (CF_API_KEY)")
+
+    url = f"{CF_API_BASE}{endpoint}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        "x-api-key": CF_API_KEY,
+    })
+
+    def fetch():
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+
+    return await asyncio.to_thread(fetch)
+
+
+async def get_hytale_game_id() -> int:
+    """Get or discover the Hytale game ID from CurseForge."""
+    global CF_HYTALE_GAME_ID
+    if CF_HYTALE_GAME_ID:
+        return CF_HYTALE_GAME_ID
+
+    # Fetch all games and find Hytale
+    data = await cf_request("/games")
+    for game in data.get("data", []):
+        if game.get("slug") == "hytale" or game.get("name", "").lower() == "hytale":
+            CF_HYTALE_GAME_ID = game["id"]
+            return CF_HYTALE_GAME_ID
+
+    raise HTTPException(status_code=500, detail="Hytale nicht in CurseForge gefunden")
+
+
+@app.get("/api/curseforge/status")
+async def api_cf_status(user: str = Depends(verify_credentials)):
+    """Check if CurseForge integration is configured and working."""
+    if not CF_API_KEY:
+        return JSONResponse({"available": False, "reason": "API Key nicht konfiguriert"})
+
+    try:
+        game_id = await get_hytale_game_id()
+        return JSONResponse({"available": True, "game_id": game_id})
+    except Exception as e:
+        return JSONResponse({"available": False, "reason": str(e)})
+
+
+@app.get("/api/curseforge/search")
+async def api_cf_search(
+    q: str = "",
+    category: str = "",
+    page: int = 0,
+    user: str = Depends(verify_credentials)
+):
+    """Search for Hytale mods on CurseForge."""
+    try:
+        game_id = await get_hytale_game_id()
+        params = {
+            "gameId": game_id,
+            "sortField": 2,  # Popularity
+            "sortOrder": "desc",
+            "pageSize": 20,
+            "index": page * 20,
+        }
+        if q:
+            params["searchFilter"] = q
+        if category:
+            params["classId"] = category
+
+        data = await cf_request("/mods/search", params)
+        mods = []
+        for mod in data.get("data", []):
+            mods.append({
+                "id": mod["id"],
+                "name": mod["name"],
+                "slug": mod["slug"],
+                "summary": mod.get("summary", ""),
+                "author": mod.get("authors", [{}])[0].get("name", "Unknown"),
+                "downloads": mod.get("downloadCount", 0),
+                "icon": mod.get("logo", {}).get("thumbnailUrl", ""),
+                "updated": mod.get("dateModified", ""),
+            })
+        return JSONResponse({
+            "mods": mods,
+            "total": data.get("pagination", {}).get("totalCount", 0),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/curseforge/mod/{mod_id}")
+async def api_cf_mod(mod_id: int, user: str = Depends(verify_credentials)):
+    """Get details and files for a specific mod."""
+    try:
+        # Get mod info
+        mod_data = await cf_request(f"/mods/{mod_id}")
+        mod = mod_data.get("data", {})
+
+        # Get files
+        files_data = await cf_request(f"/mods/{mod_id}/files", {"pageSize": 50})
+        files = []
+        for f in files_data.get("data", []):
+            files.append({
+                "id": f["id"],
+                "name": f["fileName"],
+                "version": f.get("displayName", f["fileName"]),
+                "size": f.get("fileLength", 0),
+                "date": f.get("fileDate", ""),
+                "download_url": f.get("downloadUrl", ""),
+                "game_versions": f.get("gameVersions", []),
+            })
+
+        return JSONResponse({
+            "id": mod["id"],
+            "name": mod["name"],
+            "summary": mod.get("summary", ""),
+            "description": mod.get("description", ""),  # HTML
+            "author": mod.get("authors", [{}])[0].get("name", "Unknown"),
+            "downloads": mod.get("downloadCount", 0),
+            "icon": mod.get("logo", {}).get("thumbnailUrl", ""),
+            "files": files,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/curseforge/install/{mod_id}/{file_id}")
+async def api_cf_install(mod_id: int, file_id: int, user: str = Depends(verify_credentials)):
+    """Download and install a mod from CurseForge."""
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+
+    import urllib.request
+
+    try:
+        # Get file info
+        file_data = await cf_request(f"/mods/{mod_id}/files/{file_id}")
+        file_info = file_data.get("data", {})
+        file_name = file_info.get("fileName", f"mod_{mod_id}_{file_id}.jar")
+        download_url = file_info.get("downloadUrl")
+
+        if not download_url:
+            # Some mods require fetching download URL separately
+            url_data = await cf_request(f"/mods/{mod_id}/files/{file_id}/download-url")
+            download_url = url_data.get("data")
+
+        if not download_url:
+            raise HTTPException(status_code=400, detail="Download-URL nicht verfuegbar")
+
+        # Download file
+        target_path = MODS_DIR / file_name
+
+        def download():
+            req = urllib.request.Request(download_url, headers={
+                "x-api-key": CF_API_KEY,
+            })
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                target_path.write_bytes(resp.read())
+
+        await asyncio.to_thread(download)
+
+        return {"ok": True, "file": file_name, "path": str(target_path)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Installation fehlgeschlagen: {e}")

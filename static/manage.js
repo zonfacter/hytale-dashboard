@@ -255,10 +255,15 @@
     statusDiv.hidden = true;
     dataDiv.hidden = false;
 
+    // Parse Nitrado Query API response format:
+    // { Server: { MaxPlayers, Name, Version }, Universe: { CurrentPlayers }, Players: [] }
     const q = data.data || {};
-    el("queryPlayers").textContent = q.players_online ?? "-";
-    el("queryMaxPlayers").textContent = q.max_players ?? "-";
-    el("queryTps").textContent = q.tps ? q.tps.toFixed(1) : "-";
+    const currentPlayers = q.Universe?.CurrentPlayers ?? q.Players?.length ?? "-";
+    const maxPlayers = q.Server?.MaxPlayers ?? "-";
+    // TPS is not available in the Nitrado Query API
+    el("queryPlayers").textContent = currentPlayers;
+    el("queryMaxPlayers").textContent = maxPlayers;
+    el("queryTps").textContent = "-";
   }
 
   // --- Mod Management ---
@@ -334,11 +339,189 @@
     });
   }
 
+  // --- CurseForge Browser ---
+  let cfPage = 0;
+  let cfTotal = 0;
+  let cfCurrentSearch = "";
+
+  async function checkCurseForge() {
+    const statusDiv = el("cfStatus");
+    const contentDiv = el("cfContent");
+    if (!statusDiv || !contentDiv) return;
+
+    const data = await api("/api/curseforge/status");
+    if (!data || !data.available) {
+      statusDiv.textContent = data?.reason || "CurseForge nicht verfuegbar";
+      statusDiv.hidden = false;
+      contentDiv.hidden = true;
+      return;
+    }
+
+    statusDiv.hidden = true;
+    contentDiv.hidden = false;
+    await searchCurseForge("");
+  }
+
+  async function searchCurseForge(query) {
+    cfCurrentSearch = query;
+    cfPage = 0;
+    await loadCurseForgeMods();
+  }
+
+  async function loadCurseForgeMods() {
+    const tbody = el("cfModTable");
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Suche...</td></tr>';
+
+    const params = new URLSearchParams({ page: cfPage });
+    if (cfCurrentSearch) params.set("q", cfCurrentSearch);
+
+    const data = await api(`/api/curseforge/search?${params}`);
+    if (!data) return;
+
+    cfTotal = data.total || 0;
+    const mods = data.mods || [];
+
+    if (mods.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Keine Mods gefunden</td></tr>';
+      el("cfPagination").hidden = true;
+      return;
+    }
+
+    tbody.innerHTML = mods.map(m => {
+      const icon = m.icon ? `<img src="${m.icon}" class="cf-icon" alt="" />` : '<div class="cf-icon" style="background:var(--line);"></div>';
+      const downloads = m.downloads > 1000 ? `${(m.downloads/1000).toFixed(1)}k` : m.downloads;
+      return `<tr>
+        <td>${icon}</td>
+        <td><span class="cf-mod-name" data-id="${m.id}">${m.name}</span><br><small class="muted">${m.summary.substring(0, 80)}${m.summary.length > 80 ? '...' : ''}</small></td>
+        <td>${m.author}</td>
+        <td>${downloads}</td>
+        <td><button class="btn-install cf-details-btn" data-id="${m.id}">Details</button></td>
+      </tr>`;
+    }).join("");
+
+    // Pagination
+    const pageInfo = el("cfPageInfo");
+    const pagination = el("cfPagination");
+    const totalPages = Math.ceil(cfTotal / 20);
+    if (totalPages > 1) {
+      pagination.hidden = false;
+      pageInfo.textContent = `Seite ${cfPage + 1} von ${totalPages}`;
+      el("cfPrevPage").disabled = cfPage === 0;
+      el("cfNextPage").disabled = cfPage >= totalPages - 1;
+    } else {
+      pagination.hidden = true;
+    }
+
+    // Click handlers for mod names and details buttons
+    tbody.querySelectorAll(".cf-mod-name, .cf-details-btn").forEach(elem => {
+      elem.addEventListener("click", () => openModDetails(parseInt(elem.dataset.id)));
+    });
+  }
+
+  async function openModDetails(modId) {
+    const modal = el("cfModal");
+    const title = el("cfModalTitle");
+    const summary = el("cfModalSummary");
+    const fileTable = el("cfFileTable");
+
+    if (!modal) return;
+
+    modal.classList.add("active");
+    title.textContent = "Lade...";
+    summary.textContent = "";
+    fileTable.innerHTML = '<tr><td colspan="4" class="muted">Lade Versionen...</td></tr>';
+
+    const data = await api(`/api/curseforge/mod/${modId}`);
+    if (!data) {
+      modal.classList.remove("active");
+      return;
+    }
+
+    title.textContent = data.name;
+    summary.textContent = data.summary;
+
+    const files = data.files || [];
+    if (files.length === 0) {
+      fileTable.innerHTML = '<tr><td colspan="4" class="muted">Keine Dateien verfuegbar</td></tr>';
+      return;
+    }
+
+    fileTable.innerHTML = files.slice(0, 15).map(f => {
+      const date = f.date ? f.date.substring(0, 10) : "-";
+      const size = f.size ? `${(f.size / 1024).toFixed(0)} KB` : "-";
+      return `<tr>
+        <td><strong>${f.version}</strong></td>
+        <td><code>${f.name}</code><br><small class="muted">${size}</small></td>
+        <td>${date}</td>
+        <td><button class="btn-install cf-install-btn" data-mod="${modId}" data-file="${f.id}" data-name="${f.name}">Installieren</button></td>
+      </tr>`;
+    }).join("");
+
+    // Install handlers
+    fileTable.querySelectorAll(".cf-install-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const modId = btn.dataset.mod;
+        const fileId = btn.dataset.file;
+        const fileName = btn.dataset.name;
+
+        if (!confirm(`'${fileName}' installieren?`)) return;
+
+        btn.disabled = true;
+        btn.textContent = "Installiere...";
+
+        const result = await api(`/api/curseforge/install/${modId}/${fileId}`, { method: "POST" });
+        if (result && result.ok) {
+          toast(`Mod '${result.file}' installiert. Server-Neustart erforderlich.`);
+          modal.classList.remove("active");
+          await refreshMods();
+        } else {
+          btn.disabled = false;
+          btn.textContent = "Installieren";
+        }
+      });
+    });
+  }
+
+  function setupCurseForge() {
+    const searchInput = el("cfSearch");
+    const searchBtn = el("cfSearchBtn");
+    const prevBtn = el("cfPrevPage");
+    const nextBtn = el("cfNextPage");
+    const closeBtn = el("cfModalClose");
+    const modal = el("cfModal");
+
+    if (searchBtn) {
+      searchBtn.addEventListener("click", () => searchCurseForge(searchInput?.value || ""));
+    }
+    if (searchInput) {
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") searchCurseForge(searchInput.value);
+      });
+    }
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => { cfPage--; loadCurseForgeMods(); });
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => { cfPage++; loadCurseForgeMods(); });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => { modal.classList.remove("active"); });
+    }
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) modal.classList.remove("active");
+      });
+    }
+  }
+
   // --- Init ---
   async function init() {
     setupConsole();
     setupConfig();
     setupModUpload();
+    setupCurseForge();
 
     await Promise.all([
       refreshPlayers(),
@@ -348,6 +531,7 @@
       refreshMods(),
       refreshPlugins(),
       refreshQuery(),
+      checkCurseForge(),
     ]);
 
     // Poll players, console, and query

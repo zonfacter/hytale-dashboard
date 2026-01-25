@@ -114,6 +114,56 @@
       </div>
     </section>
 
+    <!-- CurseForge Browser -->
+    <section class="card card-wide" id="curseforgeCard">
+      <h2>CurseForge Mods</h2>
+      <div id="cfStatus" class="muted">Pruefe CurseForge-Verbindung...</div>
+      <div id="cfContent" hidden>
+        <div class="cf-search-row">
+          <input type="text" id="cfSearch" class="console-input" placeholder="Mod suchen..." style="max-width: 300px;" />
+          <button id="cfSearchBtn" class="btn-control">Suchen</button>
+        </div>
+        <div class="table-wrap" style="margin-top: 12px;">
+          <table class="table">
+            <thead>
+              <tr><th style="width:50px;"></th><th>Name</th><th>Autor</th><th>Downloads</th>{% if allow_control %}<th>Aktion</th>{% endif %}</tr>
+            </thead>
+            <tbody id="cfModTable">
+              <tr><td colspan="5" class="muted">Suche starten...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="cfPagination" class="actions" hidden>
+          <button id="cfPrevPage" class="btn-control" disabled>&laquo; Zurueck</button>
+          <span id="cfPageInfo" class="muted"></span>
+          <button id="cfNextPage" class="btn-control">Weiter &raquo;</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- CurseForge Mod Detail Modal -->
+    <div id="cfModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="cfModalTitle">Mod Details</h3>
+          <button id="cfModalClose" class="modal-close">&times;</button>
+        </div>
+        <div id="cfModalBody">
+          <p id="cfModalSummary" class="muted"></p>
+          <h4>Versionen</h4>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr><th>Version</th><th>Datei</th><th>Datum</th>{% if allow_control %}<th>Aktion</th>{% endif %}</tr>
+              </thead>
+              <tbody id="cfFileTable">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Mod Management -->
     <section class="card card-wide" id="modCard">
       <h2>Mods</h2>
