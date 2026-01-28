@@ -43,7 +43,7 @@ Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/
 
 - Debian 12+ / Ubuntu 22.04+
 - Python 3.11+
-- Java 25 (Adoptium/Temurin empfohlen; x64/arm64 unterstuetzt)
+- Java 25 (Adoptium/Temurin empfohlen; x64/arm64 unterstützt)
 - Mindestens 4 GB RAM (mehr je nach Spieleranzahl/View Distance)
 - systemd
 - Hytale Dedicated Server Binary (von Hypixel)
@@ -82,7 +82,7 @@ Falls du die Installation manuell durchfuehren moechtest:
 
 ### Java 25 installieren (Adoptium empfohlen)
 
-Hytale benoetigt Java 25. Installation und Verifizierung:
+Hytale benötigt Java 25. Installation und Verifizierung:
 
 ```bash
 java --version
@@ -124,18 +124,18 @@ cd /opt/hytale-server
 
 Beim ersten Start oeffnet sich ein OAuth-Flow im Browser. Nach der Authentifizierung werden die Credentials gespeichert.
 
-Nuetzliche CLI-Optionen:
+Nützliche CLI-Optionen:
 - `-print-version` (Version ohne Download)
 - `-version` (Downloader-Version)
-- `-check-update` (Downloader-Updates pruefen)
+- `-check-update` (Downloader-Updates prüfen)
 - `-patchline pre-release` (Pre-Release Kanal)
 - `-download-path game.zip` (Ziel-Datei)
-- `-skip-update-check` (Update-Check ueberspringen)
+- `-skip-update-check` (Update-Check überspringen)
 
 #### Manuell aus dem Launcher kopieren (schnell zum Testen)
 
 Pfad der Launcher-Installation:
-- **Windows**: `%appdata%\\Hytale\\install\\release\\package\\game\\latest`
+- **Windows**: `%appdata%\Hytale\install\release\package\game\latest`
 - **Linux**: `$XDG_DATA_HOME/Hytale/install/release/package/game/latest`
 - **macOS**: `~/Application Support/Hytale/install/release/package/game/latest`
 
@@ -208,7 +208,7 @@ Wichtige Flags:
 - `--backup-frequency 60`: Backup-Intervall in Minuten
 - `--backup-dir backups`: Backup-Verzeichnis
 
-Hinweis: Zu wenig RAM fuehrt oft zu erhöhter CPU-Last durch Garbage Collection. Teste verschiedene `-Xmx` Werte.
+Hinweis: Zu wenig RAM führt oft zu erhöhter CPU-Last durch Garbage Collection. Teste verschiedene `-Xmx` Werte.
 
 ### 7. Server-Konfiguration (`config.json`)
 
@@ -256,8 +256,8 @@ Der Hytale-Server speichert Authentifizierungs-Credentials verschluesselt in der
 - Sie enthaelt die verschluesselten OAuth-Credentials fuer den Server
 - Bei der Erstinstallation muss einmalig eine Authentifizierung ueber den Browser erfolgen
 - Die Credentials werden dann verschluesselt gespeichert und automatisch erneuert
-- **Niemals `auth.enc` manuell bearbeiten oder loeschen** (sonst ist Re-Authentifizierung noetig)
-- Die Datei hat restriktive Berechtigungen (`600`) und gehoert dem `hytale`-User
+- **Niemals `auth.enc` manuell bearbeiten oder löschen** (sonst ist Re-Authentifizierung noetig)
+- Die Datei hat restriktive Berechtigungen (`600`) und gehört dem `hytale`-User
 
 Authentifizierung (Device Flow):
 
@@ -673,7 +673,7 @@ ls -la /opt/hytale-server/.console_pipe
 
 ## Security
 
-1. **Passwort sofort aendern!** Der Standard `change-me` ist unsicher.
+1. **Passwort sofort ändern!** Der Standard `change-me` ist unsicher.
 2. **HTTPS empfohlen**: Reverse-Proxy (nginx/caddy) mit TLS vorschalten.
 3. **Firewall**: Port 8088 nur fuer vertrauenswuerdige IPs freigeben:
    ```bash
