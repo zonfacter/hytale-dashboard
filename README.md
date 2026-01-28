@@ -91,7 +91,7 @@ java --version
 Erwartete Ausgabe (Beispiel):
 
 ```
-openjdk 25.0.1 2025-10-21 LTS
+openjdk 25.0.1 LTS
 OpenJDK Runtime Environment Temurin-25.0.1+8 (build 25.0.1+8-LTS)
 OpenJDK 64-Bit Server VM Temurin-25.0.1+8 (build 25.0.1+8-LTS, mixed mode, sharing)
 ```
