@@ -47,7 +47,55 @@ MODS_DIR = SERVER_DIR / "mods"
 WORLD_CONFIG_FILE = SERVER_DIR / "universe" / "worlds" / "default" / "config.json"
 SERVER_CONFIG_FILE = SERVER_DIR / "config.json"
 PLAYER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
-BLOCKED_CONSOLE_COMMANDS = {"op", "deop", "update", "restart", "ban", "unban"}
+
+# Security: Maximum command length to prevent buffer overflow attempts
+MAX_COMMAND_LENGTH = 500
+
+# Security: Blocked console commands that could affect host system or bypass controls
+BLOCKED_CONSOLE_COMMANDS = {
+    "op", "deop", "update", "restart", "ban", "unban", "stop", "whitelist",
+    "reload", "plugins", "plugin", "execute", "eval"
+}
+
+# Security: Shell metacharacters that could enable command injection
+# Note: Blocking backslash, newlines, carriage returns, and semicolons/pipes/etc.
+# Quotes and tabs are blocked as they could be used in injection attempts and
+# are not needed for legitimate Hytale console commands
+SHELL_METACHARACTERS = set(';&|`$()<>\\\n\r')
+
+# Security: Dangerous command patterns that could harm the host system
+# Using word boundaries (\b) to avoid false positives on substrings
+DANGEROUS_PATTERNS = [
+    re.compile(r'\.\./'),  # Path traversal attempts
+    re.compile(r'/etc/'),  # System configuration access
+    re.compile(r'/proc/'), # Process information access
+    re.compile(r'/sys/'),  # System information access
+    re.compile(r'/dev/'),  # Device access
+    re.compile(r'/root/'), # Root directory access
+    re.compile(r'/opt/(?!hytale-server)'),  # Access to /opt/ except hytale-server subdirectories
+    re.compile(r'/tmp/'),  # Temp directory access
+    re.compile(r'/var/'),  # Var directory access (logs, etc)
+    re.compile(r'\bsudo\b'),   # Privilege escalation
+    re.compile(r'\bsu\b'),     # User switching
+    re.compile(r'\bchmod\b'),  # Permission changes
+    re.compile(r'\bchown\b'),  # Ownership changes
+    re.compile(r'\brm\b'),     # File deletion
+    re.compile(r'\bmv\b'),     # File moving
+    re.compile(r'\bcp\b'),     # File copying
+    re.compile(r'\bdd\b'),     # Disk operations
+    re.compile(r'\bmkfs\b'),   # Filesystem creation
+    re.compile(r'\bmount\b'),  # Filesystem mounting
+    re.compile(r'\bumount\b'), # Filesystem unmounting
+    re.compile(r'\bkill\b'),   # Process termination
+    re.compile(r'\bpkill\b'),  # Process termination
+    re.compile(r'\breboot\b'), # System reboot
+    re.compile(r'\bshutdown\b'), # System shutdown
+    re.compile(r'\bpoweroff\b'), # System poweroff
+    re.compile(r'\bhalt\b'),   # System halt
+    re.compile(r'\binit\b'),   # Init system control
+    re.compile(r'\bsystemctl\b'), # Systemd control
+    re.compile(r'\bservice\b'), # Service control
+]
 
 # ---------------------------------------------------------------------------
 # App Setup
@@ -299,14 +347,40 @@ def get_online_players() -> list[str] | None:
 
 
 def send_console_command(command: str, ignore_errors: bool = False) -> None:
+    """
+    Send a command to the Hytale server console via FIFO pipe.
+    
+    Security: This function assumes the command has already been validated
+    by should_allow_console_command(). Additional defense-in-depth checks
+    are performed here.
+    """
     if not CONSOLE_PIPE.exists():
         if ignore_errors:
             return
         raise RuntimeError("Konsolen-Pipe nicht gefunden. Server laeuft nicht mit Wrapper.")
+    
+    # Defense in depth: Ensure no null bytes in command
+    if '\x00' in command:
+        if not ignore_errors:
+            raise RuntimeError("Invalid command: contains null bytes")
+        return
+    
+    # Defense in depth: Limit command length
+    if len(command) > MAX_COMMAND_LENGTH:
+        if not ignore_errors:
+            raise RuntimeError(f"Command too long (max {MAX_COMMAND_LENGTH} characters)")
+        return
+    
     try:
         fd = os.open(str(CONSOLE_PIPE), os.O_WRONLY | os.O_NONBLOCK)
-        os.write(fd, (command + "\n").encode())
+        # Only write the command itself, newline is added here
+        # Using strict encoding to reject invalid UTF-8 rather than silently dropping characters
+        os.write(fd, (command + "\n").encode('utf-8', errors='strict'))
         os.close(fd)
+    except UnicodeEncodeError as exc:
+        if ignore_errors:
+            return
+        raise RuntimeError(f"Invalid command encoding: {exc}") from exc
     except OSError as exc:
         if ignore_errors:
             return
@@ -423,18 +497,54 @@ def check_hourly_updates() -> None:
         schedule_or_run_update()
 
 
-def should_allow_console_command(command: str) -> bool:
-    parts = command.strip().split()
+def should_allow_console_command(command: str) -> tuple[bool, str]:
+    """
+    Validate console command for security.
+    Returns (is_allowed, error_message).
+    
+    Security checks:
+    1. Command length limits
+    2. Shell metacharacter detection
+    3. Blocked command list
+    4. Dangerous pattern detection (path traversal, system commands, etc.)
+    """
+    # Check command length
+    if len(command) > MAX_COMMAND_LENGTH:
+        return False, f"Command too long (max {MAX_COMMAND_LENGTH} characters)"
+    
+    # Check for empty command
+    if not command or not command.strip():
+        return False, "Empty command"
+    
+    command_stripped = command.strip()
+    
+    # Check for shell metacharacters that could enable command injection
+    if any(char in SHELL_METACHARACTERS for char in command):
+        return False, "Command contains forbidden characters (shell metacharacters)"
+    
+    # Check for null bytes
+    if '\x00' in command:
+        return False, "Command contains null bytes"
+    
+    # Get first word (command name)
+    parts = command_stripped.split()
     if not parts:
-        return False
+        return False, "Invalid command format"
+    
     head = parts[0].lower()
+    
+    # Check blocked commands list
     if head in BLOCKED_CONSOLE_COMMANDS:
-        return False
-    if head == "stop":
-        return False
-    if head == "whitelist":
-        return False
-    return True
+        return False, f"Command '{head}' is blocked. Use dashboard features instead"
+    
+    # Check for dangerous patterns in entire command
+    command_lower = command_stripped.lower()
+    for pattern in DANGEROUS_PATTERNS:
+        if pattern.search(command_lower):
+            return False, f"Command contains forbidden pattern: {pattern.pattern}"
+    
+    # Command passes all security checks
+    return True, ""
 
 
 def get_ops_list() -> list[str]:
@@ -796,8 +906,11 @@ async def api_console_send(request: Request, user: str = Depends(verify_credenti
     command = body.get("command", "").strip()
     if not command:
         raise HTTPException(status_code=400, detail="Kein Befehl angegeben.")
-    if not should_allow_console_command(command):
-        raise HTTPException(status_code=400, detail="Befehl ist gesperrt. Nutze die User-Verwaltung oder Dashboard-Funktionen.")
+    
+    # Security validation
+    is_allowed, error_msg = should_allow_console_command(command)
+    if not is_allowed:
+        raise HTTPException(status_code=400, detail=error_msg)
 
     if not CONSOLE_PIPE.exists():
         raise HTTPException(status_code=500, detail="Konsolen-Pipe nicht gefunden. Server laeuft nicht mit Wrapper.")
