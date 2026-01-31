@@ -3,10 +3,11 @@ FROM python:3.12-slim
 LABEL maintainer="zonfacter"
 LABEL description="Hytale Server Dashboard"
 
-# Install system dependencies
+# Install system dependencies including Docker CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     procps \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -30,7 +31,8 @@ ENV DASH_USER=admin
 ENV DASH_PASS=change-me
 ENV ALLOW_CONTROL=true
 ENV CF_API_KEY=""
-ENV HYTALE_DOCKER_CONTAINER=""
+ENV DOCKER_MODE=true
+ENV HYTALE_CONTAINER=hytale-server
 
 # Expose port
 EXPOSE 8088

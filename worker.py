@@ -24,6 +24,14 @@ PLAYER_INTERVAL = 10   # Check player events every 10 seconds
 CLEANUP_INTERVAL = 3600  # Cleanup old data every hour
 PERF_RETENTION_HOURS = 24  # Keep 24h of performance history
 
+# Docker mode detection
+DOCKER_MODE = os.environ.get("DOCKER_MODE", "false").lower() == "true"
+HYTALE_CONTAINER = os.environ.get("HYTALE_CONTAINER", "")
+if HYTALE_CONTAINER:
+    DOCKER_MODE = True
+if not DOCKER_MODE and Path("/.dockerenv").exists():
+    DOCKER_MODE = True
+
 # Globals
 running = True
 last_log_position = ""
@@ -112,9 +120,27 @@ def run_cmd(cmd: list, timeout: int = 10) -> tuple:
         return str(e), 1
 
 
+def get_logs(lines: int = 200) -> str:
+    """Get recent logs from journalctl or docker logs."""
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        cmd = ["docker", "logs", "--tail", str(lines), HYTALE_CONTAINER]
+    else:
+        cmd = ["journalctl", "-u", SERVICE_NAME, f"-n{lines}", "--no-pager", "-q"]
+    output, rc = run_cmd(cmd)
+    return output if rc == 0 else ""
+
+
 def get_java_pid() -> str | None:
     """Find the Java process PID for Hytale server."""
-    # Get wrapper PID from systemd
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: get PID from docker inspect
+        cmd = ["docker", "inspect", "--format", "{{.State.Pid}}", HYTALE_CONTAINER]
+        output, rc = run_cmd(cmd)
+        if rc == 0 and output.strip() and output.strip() != "0":
+            return output.strip()
+        return None
+
+    # Native mode: Get wrapper PID from systemd
     output, rc = run_cmd(["systemctl", "show", SERVICE_NAME, "--property=MainPID", "--value"])
     if rc != 0 or not output or output == "0":
         return None
@@ -134,6 +160,42 @@ def get_java_pid() -> str | None:
     return None
 
 
+def get_docker_stats() -> dict:
+    """Get CPU/RAM stats from docker stats."""
+    if not HYTALE_CONTAINER:
+        return {}
+    cmd = ["docker", "stats", "--no-stream", "--format",
+           "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}", HYTALE_CONTAINER]
+    output, rc = run_cmd(cmd, timeout=10)
+    if rc != 0 or not output.strip():
+        return {}
+
+    try:
+        parts = output.strip().split("|")
+        cpu_str = parts[0].replace("%", "").strip()
+        mem_usage = parts[1].split("/")[0].strip()
+        mem_pct = parts[2].replace("%", "").strip()
+
+        result = {
+            "cpu_percent": float(cpu_str),
+            "ram_percent": float(mem_pct),
+        }
+
+        # Parse memory (e.g., "1.5GiB" or "512MiB")
+        if "GiB" in mem_usage:
+            result["ram_mb"] = float(mem_usage.replace("GiB", "")) * 1024
+        elif "MiB" in mem_usage:
+            result["ram_mb"] = float(mem_usage.replace("MiB", ""))
+        elif "GB" in mem_usage:
+            result["ram_mb"] = float(mem_usage.replace("GB", "")) * 1024
+        elif "MB" in mem_usage:
+            result["ram_mb"] = float(mem_usage.replace("MB", ""))
+
+        return result
+    except (ValueError, IndexError):
+        return {}
+
+
 def collect_performance() -> dict:
     """Collect current performance metrics."""
     result = {
@@ -145,8 +207,8 @@ def collect_performance() -> dict:
     }
 
     # Get TPS and view_radius from recent logs
-    output, rc = run_cmd(["journalctl", "-u", SERVICE_NAME, "-n200", "--no-pager", "-q"])
-    if rc == 0:
+    output = get_logs(200)
+    if output:
         tps_re = re.compile(r"Setting TPS of world \w+ to (\d+)")
         vr_re = re.compile(r"(?:Initial view radius is|View radius.*?to) (\d+)")
         for line in reversed(output.splitlines()):
@@ -161,18 +223,27 @@ def collect_performance() -> dict:
             if result["tps"] is not None and result["view_radius"] is not None:
                 break
 
-    # Get CPU/RAM from Java process
-    java_pid = get_java_pid()
-    if java_pid:
-        output, rc = run_cmd(["ps", "-p", java_pid, "-o", "%cpu,%mem,rss", "--no-headers"])
-        if rc == 0 and output:
-            try:
-                parts = output.split()
-                result["cpu_percent"] = float(parts[0])
-                result["ram_percent"] = float(parts[1])
-                result["ram_mb"] = int(parts[2]) / 1024  # KB to MB
-            except (ValueError, IndexError):
-                pass
+    # Get CPU/RAM - different methods for Docker vs native
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: use docker stats
+        stats = get_docker_stats()
+        if stats:
+            result["cpu_percent"] = stats.get("cpu_percent")
+            result["ram_percent"] = stats.get("ram_percent")
+            result["ram_mb"] = stats.get("ram_mb")
+    else:
+        # Native mode: use ps with Java PID
+        java_pid = get_java_pid()
+        if java_pid:
+            output, rc = run_cmd(["ps", "-p", java_pid, "-o", "%cpu,%mem,rss", "--no-headers"])
+            if rc == 0 and output:
+                try:
+                    parts = output.split()
+                    result["cpu_percent"] = float(parts[0])
+                    result["ram_percent"] = float(parts[1])
+                    result["ram_mb"] = int(parts[2]) / 1024  # KB to MB
+                except (ValueError, IndexError):
+                    pass
 
     return result
 
@@ -245,8 +316,14 @@ def check_player_events(conn):
     since_ts = row[0] if row else "3 days ago"
 
     # Query logs since last check
-    cmd = ["journalctl", "-u", SERVICE_NAME, "--no-pager", "-o", "short-iso", "--since", since_ts]
-    output, rc = run_cmd(cmd, timeout=30)
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: get recent logs (no --since support, get more lines)
+        cmd = ["docker", "logs", "--tail", "1000", HYTALE_CONTAINER]
+        output, rc = run_cmd(cmd, timeout=30)
+    else:
+        # Native mode: use journalctl with --since
+        cmd = ["journalctl", "-u", SERVICE_NAME, "--no-pager", "-o", "short-iso", "--since", since_ts]
+        output, rc = run_cmd(cmd, timeout=30)
 
     if rc != 0:
         return
@@ -321,9 +398,15 @@ def initial_player_sync(conn):
     """Initial sync of player data from logs on startup."""
     print("[Worker] Initial player sync from logs...")
 
-    # Get last 7 days of logs for initial sync
-    cmd = ["journalctl", "-u", SERVICE_NAME, "--no-pager", "-o", "short-iso", "--since", "7 days ago"]
-    output, rc = run_cmd(cmd, timeout=60)
+    # Get logs for initial sync
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: get all available logs
+        cmd = ["docker", "logs", HYTALE_CONTAINER]
+        output, rc = run_cmd(cmd, timeout=60)
+    else:
+        # Native mode: get last 7 days
+        cmd = ["journalctl", "-u", SERVICE_NAME, "--no-pager", "-o", "short-iso", "--since", "7 days ago"]
+        output, rc = run_cmd(cmd, timeout=60)
 
     if rc != 0:
         print(f"[Worker] Failed to get logs: {output}")

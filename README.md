@@ -59,7 +59,14 @@ Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/
 
 ## Docker Installation
 
-Das Dashboard kann auch als Docker Container betrieben werden:
+Das Dashboard kann als Docker Container betrieben werden und ueberwacht einen Hytale Server Container.
+
+### Voraussetzungen
+
+- Docker und Docker Compose installiert
+- Hytale Server laeuft als Docker Container (z.B. `hytale-server`)
+
+### Installation
 
 ```bash
 # Repository klonen
@@ -72,6 +79,11 @@ DASH_USER=admin
 DASH_PASS=dein-sicheres-passwort
 ALLOW_CONTROL=true
 CF_API_KEY=dein-curseforge-api-key
+
+# Docker-spezifische Einstellungen
+DOCKER_MODE=true
+HYTALE_CONTAINER=hytale-server
+HYTALE_SERVER_DIR=/opt/hytale-server
 EOF
 
 # Container starten
@@ -79,6 +91,18 @@ docker-compose up -d
 ```
 
 Das Dashboard ist dann unter `http://localhost:8088` erreichbar.
+
+### Umgebungsvariablen
+
+| Variable | Standard | Beschreibung |
+|----------|----------|--------------|
+| `DOCKER_MODE` | `true` | Docker-Modus aktivieren |
+| `HYTALE_CONTAINER` | `hytale-server` | Name des Hytale Server Containers |
+| `HYTALE_SERVER_DIR` | `/opt/hytale-server` | Server-Verzeichnis auf dem Host |
+| `DASH_USER` | `admin` | Dashboard Benutzername |
+| `DASH_PASS` | `change-me` | Dashboard Passwort |
+| `ALLOW_CONTROL` | `true` | Start/Stop/Restart erlauben |
+| `CF_API_KEY` | - | CurseForge API Key |
 
 ### Docker Compose Services
 
@@ -92,16 +116,27 @@ Das Dashboard ist dann unter `http://localhost:8088` erreichbar.
 | Volume | Beschreibung |
 |--------|--------------|
 | `./data` | SQLite Datenbank (Persistenz) |
-| `/opt/hytale-server` | Server-Verzeichnis (read-only) |
-| `/var/log/journal` | Journal-Logs (read-only) |
+| `$HYTALE_SERVER_DIR` | Server-Verzeichnis fuer Config/Mods |
+| `/var/run/docker.sock` | Docker Socket fuer Container-Steuerung |
+
+### Docker vs Native Modus
+
+Das Dashboard erkennt automatisch ob es in Docker laeuft und verwendet entsprechende Befehle:
+
+| Funktion | Native | Docker |
+|----------|--------|--------|
+| Server Status | `systemctl show` | `docker inspect` |
+| Logs | `journalctl` | `docker logs` |
+| Start/Stop | `systemctl start/stop` | `docker start/stop` |
+| CPU/RAM | `ps` | `docker stats` |
 
 ### Mit Prometheus & Grafana
 
-Entkommentiere die optionalen Services in `docker-compose.yml` fuer vollstaendiges Monitoring:
+Fuer vollstaendiges Monitoring entkommentiere die Services in `docker-compose.yml`:
 
 ```bash
-# Alle Services inkl. Prometheus/Grafana starten
-docker-compose --profile monitoring up -d
+# Alle Services inkl. Monitoring starten
+docker-compose up -d
 ```
 
 ---

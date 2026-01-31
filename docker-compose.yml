@@ -11,17 +11,17 @@ services:
       # SQLite database persistence
       - ./data:/app/data
       # Mount server directory for config/mods access
-      - /opt/hytale-server:/opt/hytale-server:ro
-      # Mount journal for log access (read-only)
-      - /var/log/journal:/var/log/journal:ro
-      - /run/log/journal:/run/log/journal:ro
+      - ${HYTALE_SERVER_DIR:-/opt/hytale-server}:/opt/hytale-server
+      # Mount Docker socket for container control
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - DASH_USER=${DASH_USER:-admin}
       - DASH_PASS=${DASH_PASS:-change-me}
       - ALLOW_CONTROL=${ALLOW_CONTROL:-true}
       - CF_API_KEY=${CF_API_KEY:-}
-      # For Docker mode: specify container name to monitor
-      - HYTALE_DOCKER_CONTAINER=${HYTALE_DOCKER_CONTAINER:-}
+      # Docker mode: set to true and specify Hytale server container name
+      - DOCKER_MODE=${DOCKER_MODE:-true}
+      - HYTALE_CONTAINER=${HYTALE_CONTAINER:-hytale-server}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8088/metrics"]
       interval: 30s
@@ -37,15 +37,15 @@ services:
     volumes:
       # SQLite database persistence (shared with dashboard)
       - ./data:/app/data
-      # Mount journal for log access (read-only)
-      - /var/log/journal:/var/log/journal:ro
-      - /run/log/journal:/run/log/journal:ro
+      # Mount Docker socket for stats collection
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      - HYTALE_DOCKER_CONTAINER=${HYTALE_DOCKER_CONTAINER:-}
+      - DOCKER_MODE=${DOCKER_MODE:-true}
+      - HYTALE_CONTAINER=${HYTALE_CONTAINER:-hytale-server}
     depends_on:
       - dashboard
 
-# Optional: Prometheus and Grafana for monitoring
+# Optional: Full monitoring stack
 #  prometheus:
 #    image: prom/prometheus:latest
 #    container_name: hytale-prometheus

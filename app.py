@@ -29,6 +29,17 @@ ALLOW_CONTROL = os.environ.get("ALLOW_CONTROL", "false").lower() == "true"
 # CurseForge API Key (from env, can be overridden via config file)
 _CF_API_KEY_ENV = os.environ.get("CF_API_KEY", "")
 
+# Docker mode detection
+# Set DOCKER_MODE=true or HYTALE_CONTAINER=container_name for Docker
+DOCKER_MODE = os.environ.get("DOCKER_MODE", "false").lower() == "true"
+HYTALE_CONTAINER = os.environ.get("HYTALE_CONTAINER", "")  # Docker container name
+if HYTALE_CONTAINER:
+    DOCKER_MODE = True
+
+# Auto-detect Docker: check if running inside a container
+if not DOCKER_MODE and Path("/.dockerenv").exists():
+    DOCKER_MODE = True
+
 SERVICE_NAME = "hytale.service"
 BACKUP_DIR = Path("/opt/hytale-server/backups")
 SERVER_DIR = Path("/opt/hytale-server")
@@ -243,7 +254,29 @@ def human_size(size_bytes: float) -> str:
 
 
 def get_service_status() -> dict:
-    """Query systemd for hytale.service status."""
+    """Query service status (systemd or Docker)."""
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: use docker inspect
+        cmd = ["docker", "inspect", "--format",
+               '{{.State.Status}}|{{.State.Pid}}|{{.State.StartedAt}}', HYTALE_CONTAINER]
+        output, rc = run_cmd(cmd)
+        if rc != 0:
+            return {"error": output, "ActiveState": "unknown"}
+
+        parts = output.strip().split("|")
+        status = parts[0] if len(parts) > 0 else "unknown"
+        pid = parts[1] if len(parts) > 1 else "0"
+        started = parts[2] if len(parts) > 2 else "n/a"
+
+        return {
+            "ActiveState": "active" if status == "running" else "inactive",
+            "SubState": status,
+            "MainPID": pid,
+            "ActiveEnterTimestamp": started,
+            "StartTime": started,
+        }
+
+    # Native mode: use systemctl
     props = ["ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp"]
     cmd = ["systemctl", "show", SERVICE_NAME, "--property=" + ",".join(props)]
     output, rc = run_cmd(cmd)
@@ -261,7 +294,16 @@ def get_service_status() -> dict:
 
 
 def get_logs() -> list[str]:
-    """Fetch journal logs for hytale unit."""
+    """Fetch logs (journal or Docker logs)."""
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode: use docker logs
+        cmd = ["docker", "logs", "--tail", str(LOG_LINES), HYTALE_CONTAINER]
+        output, rc = run_cmd(cmd, timeout=15)
+        if rc != 0:
+            return [f"[Error fetching Docker logs: {output}]"]
+        return output.splitlines()
+
+    # Native mode: use journalctl
     cmd = ["journalctl", "-u", "hytale", f"-n{LOG_LINES}", "--no-pager"]
     output, rc = run_cmd(cmd, timeout=15)
     if rc != 0:
@@ -1148,15 +1190,27 @@ async def api_server_action(action: str, user: str = Depends(verify_credentials)
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
 
-    allowed = {
-        "start": ["sudo", "/bin/systemctl", "start", SERVICE_NAME],
-        "stop": ["sudo", "/bin/systemctl", "stop", SERVICE_NAME],
-        "restart": ["sudo", "/bin/systemctl", "restart", SERVICE_NAME],
-    }
-    if action not in allowed:
-        raise HTTPException(status_code=400, detail=f"Unbekannte Aktion: {action}")
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode
+        docker_actions = {
+            "start": ["docker", "start", HYTALE_CONTAINER],
+            "stop": ["docker", "stop", HYTALE_CONTAINER],
+            "restart": ["docker", "restart", HYTALE_CONTAINER],
+        }
+        if action not in docker_actions:
+            raise HTTPException(status_code=400, detail=f"Unbekannte Aktion: {action}")
+        output, rc = run_cmd(docker_actions[action], timeout=60)
+    else:
+        # Native mode with systemctl
+        allowed = {
+            "start": ["sudo", "/bin/systemctl", "start", SERVICE_NAME],
+            "stop": ["sudo", "/bin/systemctl", "stop", SERVICE_NAME],
+            "restart": ["sudo", "/bin/systemctl", "restart", SERVICE_NAME],
+        }
+        if action not in allowed:
+            raise HTTPException(status_code=400, detail=f"Unbekannte Aktion: {action}")
+        output, rc = run_cmd(allowed[action], timeout=30)
 
-    output, rc = run_cmd(allowed[action], timeout=30)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
     return {"ok": True, "action": action}
@@ -1420,9 +1474,15 @@ async def api_console_send(request: Request, user: str = Depends(verify_credenti
 
 def _get_console_output(since: str = "") -> list:
     """Sync function to get console output."""
-    cmd = ["journalctl", "-u", "hytale", "-n50", "--no-pager"]
-    if since:
-        cmd.extend(["--since", since])
+    if DOCKER_MODE and HYTALE_CONTAINER:
+        # Docker mode
+        cmd = ["docker", "logs", "--tail", "50", HYTALE_CONTAINER]
+        # Note: Docker logs doesn't support --since in the same way
+    else:
+        # Native mode
+        cmd = ["journalctl", "-u", "hytale", "-n50", "--no-pager"]
+        if since:
+            cmd.extend(["--since", since])
     output, rc = run_cmd(cmd, timeout=10)
     return output.splitlines() if rc == 0 else [f"[Fehler: {output}]"]
 
