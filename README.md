@@ -587,14 +587,95 @@ scrape_configs:
    - CPU Usage: `hytale_cpu_percent`
    - Player Count: `hytale_players_online`
 
-### JSON Datasource (Alternative)
+### Grafana mit Infinity Plugin (Ohne Prometheus)
 
-Falls du Grafana's JSON Datasource Plugin bevorzugst:
+Die einfachste Methode: Grafana direkt mit dem Dashboard verbinden - kein Prometheus noetig!
 
+#### Installation (Native)
+
+```bash
+# Grafana installieren
+sudo apt update
+sudo apt install -y grafana
+
+# Grafana starten
+sudo systemctl enable --now grafana-server
+
+# Infinity Plugin installieren
+sudo grafana-cli plugins install yesoreyeram-infinity-datasource
+sudo systemctl restart grafana-server
 ```
-URL: http://YOUR_SERVER_IP:8088/api/performance/history?hours=24
-Auth: Basic Auth (admin / dein-passwort)
-```
+
+Grafana ist dann unter `http://YOUR_SERVER_IP:3000` erreichbar (Login: `admin` / `admin`).
+
+#### Data Source einrichten
+
+1. **Connections → Data Sources → Add data source**
+2. Suche nach **Infinity**
+3. Konfiguration:
+
+| Einstellung | Wert |
+|-------------|------|
+| Name | `Hytale Dashboard` |
+| Base URL | `http://localhost:8088` |
+
+4. **Authentication:**
+   - Type: `Basic Authentication`
+   - User: `admin` (oder dein Dashboard-User)
+   - Password: Dein Dashboard-Passwort
+
+5. **Save & Test**
+
+#### Dashboard erstellen
+
+1. **Dashboards → New → New Dashboard**
+2. **Add visualization**
+3. Data Source: `Hytale Dashboard`
+
+**Beispiel: TPS Graph**
+
+| Einstellung | Wert |
+|-------------|------|
+| Type | JSON |
+| Parser | Backend |
+| Source | URL |
+| URL | `/api/performance/history?hours=6` |
+| Method | GET |
+
+Unter **Parsing options & Result fields**:
+- Rows/Root: `$` (Root-Array)
+- Columns:
+  - Selector: `timestamp`, Type: `Timestamp`, As: `Time`
+  - Selector: `tps`, Type: `Number`, As: `TPS`
+
+**Beispiel: Aktuelle Werte (Stat Panel)**
+
+| Einstellung | Wert |
+|-------------|------|
+| Type | JSON |
+| URL | `/api/performance` |
+
+Columns:
+- Selector: `tps`, Type: `Number`, As: `TPS`
+- Selector: `cpu`, Type: `Number`, As: `CPU %`
+- Selector: `ram_mb`, Type: `Number`, As: `RAM MB`
+- Selector: `players_online`, Type: `Number`, As: `Players`
+
+#### Verfuegbare API Endpoints fuer Grafana
+
+| Endpoint | Beschreibung | Beispiel-Selektoren |
+|----------|--------------|---------------------|
+| `/api/performance` | Aktuelle Werte | `tps`, `cpu`, `ram_mb`, `ram_percent`, `view_radius`, `players_online` |
+| `/api/performance/history?hours=N` | Verlauf (1-24h) | Array mit `timestamp`, `tps`, `cpu`, `ram_mb` |
+| `/api/players` | Spielerliste | `name`, `last_seen`, `online`, `world` |
+| `/api/status` | Server-Status | `service.active_state`, `disk.used_percent`, `backups` |
+
+#### Vorteile dieser Methode
+
+- Kein Prometheus noetig
+- Einfachere Einrichtung
+- Direkte JSON-Abfrage
+- Weniger Ressourcenverbrauch
 
 ---
 
