@@ -22,6 +22,8 @@ COPY app.py .
 COPY worker.py .
 COPY templates/ templates/
 COPY static/ static/
+COPY hytale-update.sh hytale-restore.sh hytale-token.sh hytale-backup-manual.sh /usr/local/sbin/
+RUN chmod 755 /usr/local/sbin/hytale-update.sh /usr/local/sbin/hytale-restore.sh /usr/local/sbin/hytale-token.sh /usr/local/sbin/hytale-backup-manual.sh
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data

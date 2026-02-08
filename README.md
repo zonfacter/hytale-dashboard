@@ -129,6 +129,9 @@ Das Dashboard ist dann unter `http://localhost:8088` erreichbar.
 
 ### Docker vs Native Modus
 
+- Hinweis: Backup-Restore und Token-Restore sind aktuell nur im Native-Modus (systemd) verfuegbar; im Docker-Modus liefert die API eine klare Fehlermeldung.
+
+
 Das Dashboard erkennt automatisch ob es in Docker laeuft und verwendet entsprechende Befehle:
 
 | Funktion | Native | Docker |

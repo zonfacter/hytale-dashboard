@@ -255,6 +255,13 @@ async def run_cmd_async(cmd: list[str], timeout: int = 10) -> tuple[str, int]:
     return await loop.run_in_executor(_executor, run_cmd, cmd, timeout)
 
 
+def with_optional_sudo(cmd: list[str]) -> list[str]:
+    """Use sudo in native mode, direct command in Docker mode."""
+    if DOCKER_MODE:
+        return cmd
+    return ["sudo", *cmd]
+
+
 def human_size(size_bytes: float) -> str:
     """Convert bytes to human-readable string."""
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -698,7 +705,7 @@ def _extract_seed_from_update_backup_dir(backup_dir: Path) -> str | None:
     return None
 
 
-def get_backup_seed(path: Path, backup_type: str) -> str | None:
+def get_backup_seed(path: Path, backup_type: str, force_refresh: bool = False) -> str | None:
     """
     Resolve and cache seed metadata for backup files/directories.
     Cache key uses size+mtime so updates invalidate automatically.
@@ -710,17 +717,18 @@ def get_backup_seed(path: Path, backup_type: str) -> str | None:
 
     cache_key = str(path)
     signature = (int(st.st_mtime), st.st_size, backup_type)
-    with _backup_seed_cache_lock:
-        cached = _backup_seed_cache.get(cache_key)
-        if cached and cached.get("signature") == signature:
-            return cached.get("seed")
-
-    ensure_backup_seed_cache_table()
-    seed_from_db = get_backup_seed_from_db(cache_key, backup_type, signature[0], signature[1])
-    if seed_from_db is not None:
+    if not force_refresh:
         with _backup_seed_cache_lock:
-            _backup_seed_cache[cache_key] = {"signature": signature, "seed": seed_from_db}
-        return seed_from_db
+            cached = _backup_seed_cache.get(cache_key)
+            if cached and cached.get("signature") == signature:
+                return cached.get("seed")
+
+        ensure_backup_seed_cache_table()
+        seed_from_db = get_backup_seed_from_db(cache_key, backup_type, signature[0], signature[1])
+        if seed_from_db is not None:
+            with _backup_seed_cache_lock:
+                _backup_seed_cache[cache_key] = {"signature": signature, "seed": seed_from_db}
+            return seed_from_db
 
     seed = None
     if backup_type == "backup":
@@ -897,7 +905,7 @@ def check_auto_update() -> None:
     current_count = get_backup_count()
     if current_count > stored_count:
         # New backup detected, trigger update
-        run_cmd(["sudo", UPDATE_SCRIPT, "update"], timeout=300)
+        run_cmd(with_optional_sudo([UPDATE_SCRIPT, "update"]), timeout=300)
         # Flag is removed by the update script
 
 
@@ -1046,7 +1054,7 @@ def should_run_version_check(now: datetime) -> bool:
 
 
 def check_for_updates() -> dict | None:
-    output, rc = run_cmd(["sudo", UPDATE_SCRIPT, "check"], timeout=300)
+    output, rc = run_cmd(with_optional_sudo([UPDATE_SCRIPT, "check"]), timeout=300)
     if rc != 0:
         return None
     try:
@@ -1088,7 +1096,7 @@ def schedule_or_run_update() -> None:
         apply_postpone_if_requested()
         schedule = load_update_schedule()
         if schedule and now >= schedule:
-            run_cmd(["sudo", UPDATE_SCRIPT, "update"], timeout=600)
+            run_cmd(with_optional_sudo([UPDATE_SCRIPT, "update"]), timeout=600)
             clear_update_schedule()
         return
     if not has_update_available():
@@ -1097,7 +1105,7 @@ def schedule_or_run_update() -> None:
     if online_players is None:
         return
     if not online_players:
-        run_cmd(["sudo", UPDATE_SCRIPT, "update"], timeout=600)
+        run_cmd(with_optional_sudo([UPDATE_SCRIPT, "update"]), timeout=600)
         return
     scheduled_at = now + timedelta(minutes=UPDATE_NOTICE_MINUTES)
     if load_update_schedule():
@@ -1523,7 +1531,7 @@ async def api_token_backups(user: str = Depends(verify_credentials)):
 async def api_token_backup(user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
-    output, rc = await asyncio.to_thread(run_cmd, ["sudo", TOKEN_SCRIPT, "backup"], 120)
+    output, rc = await asyncio.to_thread(run_cmd, with_optional_sudo([TOKEN_SCRIPT, "backup"]), 120)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output or "Token-Backup fehlgeschlagen.")
     return {"ok": True, "message": "Token-Backup erstellt.", "output": output}
@@ -1533,11 +1541,13 @@ async def api_token_backup(user: str = Depends(verify_credentials)):
 async def api_token_restore(request: Request, user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    if DOCKER_MODE:
+        raise HTTPException(status_code=400, detail="Token-Restore wird im Docker-Modus aktuell nicht unterstuetzt.")
     body = await request.json()
     name = str(body.get("name", "")).strip()
     if not name or Path(name).name != name or not name.endswith(".enc"):
         raise HTTPException(status_code=400, detail="Ungueltiger Token-Backup Name.")
-    output, rc = await asyncio.to_thread(run_cmd, ["sudo", TOKEN_SCRIPT, "restore", name], 180)
+    output, rc = await asyncio.to_thread(run_cmd, with_optional_sudo([TOKEN_SCRIPT, "restore", name]), 180)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output or "Token-Restore fehlgeschlagen.")
     return {"ok": True, "message": "Token wiederhergestellt und Server neu gestartet.", "output": output}
@@ -1582,10 +1592,18 @@ async def api_backup_run(user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
 
-    output, rc = run_cmd(["sudo", "/usr/local/sbin/hytale-backup.sh"], timeout=120)
+    if DOCKER_MODE:
+        output, rc = run_cmd(with_optional_sudo([MANUAL_BACKUP_SCRIPT, "", ""]), timeout=240)
+    else:
+        output, rc = run_cmd(with_optional_sudo(["/usr/local/sbin/hytale-backup.sh"]), timeout=120)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
     return {"ok": True, "output": output}
+
+
+@app.post("/api/backups/create")
+async def api_backups_create(request: Request, user: str = Depends(verify_credentials)):
+    return await api_backup_create(request, user)
 
 
 @app.post("/api/backup/create")
@@ -1602,7 +1620,7 @@ async def api_backup_create(request: Request, user: str = Depends(verify_credent
     if len(comment) > 240:
         raise HTTPException(status_code=400, detail="Kommentar zu lang (max. 240 Zeichen).")
 
-    output, rc = run_cmd(["sudo", MANUAL_BACKUP_SCRIPT, label, comment], timeout=240)
+    output, rc = run_cmd(with_optional_sudo([MANUAL_BACKUP_SCRIPT, label, comment]), timeout=240)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
     return {"ok": True, "output": output}
@@ -1735,7 +1753,7 @@ async def api_version_check(user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
 
-    output, rc = await asyncio.to_thread(run_cmd, ["sudo", UPDATE_SCRIPT, "check"], 300)
+    output, rc = await asyncio.to_thread(run_cmd, with_optional_sudo([UPDATE_SCRIPT, "check"]), 300)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
 
@@ -1755,7 +1773,7 @@ async def api_update_run(user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
 
-    output, rc = await asyncio.to_thread(run_cmd, ["sudo", UPDATE_SCRIPT, "update"], 600)
+    output, rc = await asyncio.to_thread(run_cmd, with_optional_sudo([UPDATE_SCRIPT, "update"]), 600)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
 
@@ -1970,6 +1988,9 @@ async def api_backup_restore(request: Request, user: str = Depends(verify_creden
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
 
+    if DOCKER_MODE:
+        raise HTTPException(status_code=400, detail="Backup-Restore wird im Docker-Modus aktuell nicht unterstuetzt.")
+
     body = await request.json()
     name = str(body.get("name", "")).strip()
     backup_type = str(body.get("backup_type", "backup")).strip()
@@ -1995,7 +2016,7 @@ async def api_backup_restore(request: Request, user: str = Depends(verify_creden
         raise HTTPException(status_code=400, detail="Ungueltiger Backup-Typ.")
 
     mode = "full" if include_server_state else "world"
-    output, rc = await asyncio.to_thread(run_cmd, ["sudo", RESTORE_SCRIPT, str(backup_path), mode], 900)
+    output, rc = await asyncio.to_thread(run_cmd, with_optional_sudo([RESTORE_SCRIPT, str(backup_path), mode]), 900)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output or "Restore fehlgeschlagen.")
 
@@ -2008,6 +2029,33 @@ async def api_backup_restore(request: Request, user: str = Depends(verify_creden
         "message": "Restore erfolgreich.",
         "output": summary,
     })
+
+
+
+@app.post("/api/backups/seed/refresh")
+async def api_backup_seed_refresh(request: Request, user: str = Depends(verify_credentials)):
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    backup_type = str(body.get("backup_type", "backup")).strip()
+
+    if not name or Path(name).name != name:
+        raise HTTPException(status_code=400, detail="Ungueltiger Backup-Name.")
+
+    if backup_type == "backup":
+        backup_path = BACKUP_DIR / name
+        if not backup_path.exists() or not backup_path.is_file():
+            raise HTTPException(status_code=404, detail="Backup nicht gefunden.")
+    elif backup_type == "update-backup":
+        backup_path = SERVER_DIR / name
+        if not name.startswith(".update_backup_"):
+            raise HTTPException(status_code=400, detail="Ungueltiger Update-Backup Name.")
+        if not backup_path.exists() or not backup_path.is_dir():
+            raise HTTPException(status_code=404, detail="Update-Backup nicht gefunden.")
+    else:
+        raise HTTPException(status_code=400, detail="Ungueltiger Backup-Typ.")
+
+    seed = await asyncio.to_thread(get_backup_seed, backup_path, backup_type, True)
+    return JSONResponse({"ok": True, "seed": seed or "unknown"})
 
 
 @app.delete("/api/backups/{filename:path}")

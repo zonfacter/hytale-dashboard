@@ -75,6 +75,14 @@
     <!-- Backup Management -->
     <section class="card card-wide">
       <h2>Backup-Verwaltung</h2>
+      {% if allow_control %}
+      <div class="actions" style="margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <input id="backupCreateLabel" class="console-input" style="max-width:200px;" placeholder="Label (optional)" />
+        <input id="backupCreateComment" class="console-input" style="max-width:320px;" placeholder="Kommentar (optional)" />
+        <button id="backupCreateRun" class="btn-control">Backup erstellen</button>
+        <button id="backupRefreshList" class="btn-control btn-secondary">Liste aktualisieren</button>
+      </div>
+      {% endif %}
       <div class="table-wrap">
         <table class="table">
           <thead>

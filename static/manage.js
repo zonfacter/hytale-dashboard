@@ -197,6 +197,85 @@
   }
 
   // --- Backup Management ---
+  async function restoreBackup(name, backupType, includeServerState, btn) {
+    const modeLabel = includeServerState ? "voll" : "world";
+    const typeLabel = backupType === "update-backup" ? "Update-Backup" : "Backup";
+    if (!confirm(`${typeLabel} '${name}' als ${modeLabel}-Restore wiederherstellen? Server wird dabei kurz gestoppt.`)) return;
+
+    if (btn) btn.disabled = true;
+    const result = await api("/api/backups/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        backup_type: backupType,
+        include_server_state: includeServerState,
+      }),
+    });
+
+    if (result && result.ok) {
+      toast(`Restore erfolgreich (${result.mode})`);
+      await Promise.all([refreshBackups(), refreshPlayers(), refreshQuery()]);
+      setTimeout(() => refreshConsole(), 1000);
+      return;
+    }
+
+    if (btn) btn.disabled = false;
+  }
+
+  async function refreshBackupSeed(name, backupType, btn) {
+    if (btn) btn.disabled = true;
+    const result = await api("/api/backups/seed/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, backup_type: backupType }),
+    });
+
+    if (result && result.ok) {
+      const seedText = result.seed && result.seed !== "unknown" ? result.seed : "unbekannt";
+      toast(`Seed aktualisiert: ${seedText}`);
+      await refreshBackups();
+      return;
+    }
+
+    if (btn) btn.disabled = false;
+  }
+
+  function setupBackupManagement() {
+    const runBtn = el("backupCreateRun");
+    if (runBtn) {
+      runBtn.addEventListener("click", async () => {
+        const label = (el("backupCreateLabel")?.value || "").trim();
+        const comment = (el("backupCreateComment")?.value || "").trim();
+        runBtn.disabled = true;
+
+        const result = await api("/api/backups/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, comment }),
+        });
+
+        if (result && result.ok) {
+          toast("Backup erstellt");
+          if (el("backupCreateLabel")) el("backupCreateLabel").value = "";
+          if (el("backupCreateComment")) el("backupCreateComment").value = "";
+          await refreshBackups();
+        }
+
+        runBtn.disabled = false;
+      });
+    }
+
+    const refreshBtn = el("backupRefreshList");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.disabled = true;
+        await refreshBackups();
+        refreshBtn.disabled = false;
+      });
+    }
+  }
+
   async function refreshBackups() {
     const data = await api("/api/backups/list");
     if (!data) return;
@@ -208,21 +287,30 @@
       tbody.innerHTML = `<tr><td colspan="${backupColspan}" class="muted">Keine Backups</td></tr>`;
       return;
     }
+
     tbody.innerHTML = backups.map(b => {
       const typeBadge = b.type === "backup"
         ? '<span class="badge badge-active">Backup</span>'
         : '<span class="badge badge-inactive">Update</span>';
-      const seed = b.seed && b.seed !== "unknown" ? `<code>${b.seed}</code>` : '<span class="muted">n/a</span>';
+      const seedKnown = b.seed && b.seed !== "unknown";
+      const seed = seedKnown ? `<code>${b.seed}</code>` : '<span class="muted">n/a</span>';
       const label = b.label ? `<div><strong>${b.label}</strong></div>` : "";
       const comment = b.comment ? `<div class="muted">${b.comment}</div>` : "";
-      const canRestore = b.type === "backup" || b.type === "update-backup";
-      const restoreBtn = (allowControl && canRestore)
-        ? `<button class="btn-restore" data-name="${b.name}" data-type="${b.type}">Restore</button>`
+
+      const worldRestoreBtn = allowControl
+        ? `<button class="btn-restore-world" data-name="${b.name}" data-type="${b.type}">Restore Welt</button>`
+        : "";
+      const fullRestoreBtn = allowControl
+        ? `<button class="btn-restore-full" data-name="${b.name}" data-type="${b.type}">Restore Voll</button>`
+        : "";
+      const seedRefreshBtn = (allowControl && !seedKnown)
+        ? `<button class="btn-seed-refresh" data-name="${b.name}" data-type="${b.type}">Seed scannen</button>`
         : "";
       const deleteBtn = allowControl
-        ? `<button class="btn-del" data-name="${b.name}" data-type="${b.type}">Loeschen</button>`
+        ? `<button class="btn-del" data-name="${b.name}">Loeschen</button>`
         : "";
-      const actions = `${restoreBtn}${deleteBtn}`;
+
+      const actions = `${worldRestoreBtn}${fullRestoreBtn}${seedRefreshBtn}${deleteBtn}`;
       return `<tr>
         <td>${label}<code>${b.name}</code>${comment}</td>
         <td>${b.size}</td>
@@ -233,7 +321,6 @@
       </tr>`;
     }).join("");
 
-    // Attach delete handlers
     tbody.querySelectorAll(".btn-del").forEach(btn => {
       btn.addEventListener("click", async () => {
         const name = btn.dataset.name;
@@ -243,48 +330,32 @@
         if (result && result.ok) {
           toast("Backup geloescht");
           await refreshBackups();
-        } else {
-          btn.disabled = false;
+          return;
         }
+        btn.disabled = false;
       });
     });
 
-    // Attach restore handlers
-    tbody.querySelectorAll(".btn-restore").forEach(btn => {
+    tbody.querySelectorAll(".btn-restore-world").forEach(btn => {
       btn.addEventListener("click", async () => {
-        const name = btn.dataset.name;
-        const backupType = btn.dataset.type || "backup";
-        const typeLabel = backupType === "update-backup" ? "Update-Backup" : "Backup";
-        if (!confirm(`${typeLabel} '${name}' wiederherstellen? Server wird dabei kurz gestoppt.`)) return;
+        await restoreBackup(btn.dataset.name, btn.dataset.type || "backup", false, btn);
+      });
+    });
 
-        const includeServerState = confirm(
-          "Voll-Restore ausfuehren?\n\n" +
-          "OK = Welt + auth/config/bans/whitelist/mods\n" +
-          "Abbrechen = nur Welt (Server/universe)"
-        );
+    tbody.querySelectorAll(".btn-restore-full").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        await restoreBackup(btn.dataset.name, btn.dataset.type || "backup", true, btn);
+      });
+    });
 
-        btn.disabled = true;
-        const result = await api("/api/backups/restore", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            backup_type: backupType,
-            include_server_state: includeServerState,
-          }),
-        });
-        if (result && result.ok) {
-          toast(`Restore erfolgreich (${result.mode})`);
-          await Promise.all([refreshBackups(), refreshPlayers(), refreshQuery()]);
-          setTimeout(() => refreshConsole(), 1000);
-        } else {
-          btn.disabled = false;
-        }
+    tbody.querySelectorAll(".btn-seed-refresh").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        await refreshBackupSeed(btn.dataset.name, btn.dataset.type || "backup", btn);
       });
     });
   }
 
-  // --- Plugin Store ---
+// --- Plugin Store ---
   async function refreshPlugins() {
     const data = await api("/api/plugins");
     if (!data) return;
@@ -717,6 +788,7 @@
   async function init() {
     setupConsole();
     setupConfig();
+    setupBackupManagement();
     setupModUpload();
     setupCurseForge();
     setupSettings();

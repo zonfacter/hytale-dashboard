@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-02-08
+## [v1.5.0] - 2026-02-08
 
 ### Added
 - Setup-Seite unter `/setup` fuer Server-Auth und Token-Verwaltung.
@@ -10,6 +10,8 @@
 - Backup-Metadaten (`.meta`) fuer Label/Kommentar/Quelle bei Archiv-Backups.
 
 ### Changed
+- Docker-Mode: script-basierte API-Aufrufe nutzen kein `sudo` mehr; Scripts sind im Image enthalten.
+- Backup-Verwaltung in `/manage` erweitert: Backup erstellen, Restore Welt/Voll und Seed-Neuscan pro Eintrag.
 - Backup-UI zeigt Label und Kommentar in der Liste.
 - Backup-Restore unterstuetzt jetzt auch `update-backup` neben klassischen Archiv-Backups.
 - Restore-Flow erweitert fuer Quelle als Archiv oder `.update_backup_*` Verzeichnis.
@@ -21,3 +23,6 @@
 - Seeds in der Backup-Verwaltung werden wieder konsistent aus Backup/Update-Backup ermittelt.
 - Token-Status zeigt nicht mehr faelschlich "Nicht konfiguriert", wenn gueltige Auth vorhanden ist.
 - Prometheus/Grafana-Datenaktualisierung verbessert durch korrigierte Zeitfenster-Abfragen.
+
+### Docker Compatibility
+- Backup-Restore und Token-Restore melden im Docker-Modus explizit "nicht unterstuetzt" statt eines intransparenten Script-Fehlers.
