@@ -10,6 +10,8 @@ import contextlib
 import re
 import time
 import sqlite3
+import tarfile
+import zipfile
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -45,8 +47,12 @@ BACKUP_DIR = Path("/opt/hytale-server/backups")
 SERVER_DIR = Path("/opt/hytale-server")
 LOG_LINES = 150
 DB_PATH = Path(__file__).parent / "data" / "dashboard.db"
+STATIC_VERSION = str(int(time.time()))
 
 UPDATE_SCRIPT = "/usr/local/sbin/hytale-update.sh"
+RESTORE_SCRIPT = "/usr/local/sbin/hytale-restore.sh"
+TOKEN_SCRIPT = "/usr/local/sbin/hytale-token.sh"
+MANUAL_BACKUP_SCRIPT = "/usr/local/sbin/hytale-backup-manual.sh"
 VERSION_FILE = SERVER_DIR / "last_version.txt"
 LATEST_VERSION_FILE = SERVER_DIR / ".latest_version"
 UPDATE_AFTER_BACKUP_FLAG = SERVER_DIR / ".update_after_backup"
@@ -75,6 +81,11 @@ DASHBOARD_CONFIG_FILE = SERVER_DIR / ".dashboard_config.json"
 _config_cache = None
 from threading import Lock
 _config_lock = Lock()
+_backup_seed_cache_lock = Lock()
+_backup_seed_cache: dict[str, dict] = {}
+_backup_seed_db_lock = Lock()
+_backup_seed_db_ready = False
+_backup_seed_db_disabled = False
 
 
 def load_config() -> dict:
@@ -404,7 +415,10 @@ def get_performance_history(hours: int = 1) -> list:
         c.execute("""
             SELECT timestamp, tps, cpu_percent, ram_mb, players_online
             FROM performance
-            WHERE timestamp > datetime('now', ? || ' hours')
+            WHERE strftime(
+                '%s',
+                replace(substr(timestamp, 1, 19), 'T', ' ')
+            ) > strftime('%s', 'now', ? || ' hours')
             ORDER BY timestamp ASC
         """, (f"-{hours}",))
         return [dict(row) for row in c.fetchall()]
@@ -561,16 +575,257 @@ def get_backups() -> dict:
     result = []
     for f in files:
         st = f.stat()
+        meta = read_backup_metadata(f)
         result.append({
             "name": f.name,
             "size": human_size(st.st_size),
             "size_bytes": st.st_size,
             "mtime": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
                       .strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "label": meta.get("label", ""),
+            "comment": meta.get("comment", ""),
+            "source": meta.get("source", ""),
         })
 
     last_backup = result[0]["mtime"] if result else "n/a"
     return {"files": result, "count": len(result), "last_backup": last_backup}
+
+
+def parse_seed_from_world_config(raw: str) -> str | None:
+    """Return world seed from a world config JSON payload."""
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    seed = obj.get("Seed")
+    if seed is None:
+        return None
+    return str(seed)
+
+
+def backup_meta_path(backup_file: Path) -> Path:
+    name = backup_file.name
+    if name.endswith(".tar.gz"):
+        base = name[:-7]
+    elif name.endswith(".tgz"):
+        base = name[:-4]
+    else:
+        base = backup_file.stem
+    return backup_file.parent / f"{base}.meta"
+
+
+def read_backup_metadata(backup_file: Path) -> dict[str, str]:
+    meta_file = backup_meta_path(backup_file)
+    if not meta_file.exists():
+        return {}
+    data: dict[str, str] = {}
+    try:
+        for line in meta_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not line or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip().lower()
+            if key in {"label", "comment", "source", "created_at_utc"}:
+                data[key] = value.strip()
+    except (PermissionError, OSError):
+        return {}
+    return data
+
+
+def get_active_world_seed() -> str | None:
+    """Read active world seed from current world config."""
+    candidates = [
+        SERVER_DIR / "Server" / "universe" / "worlds" / "default" / "config.json",
+        SERVER_DIR / "universe" / "worlds" / "default" / "config.json",
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                return parse_seed_from_world_config(path.read_text())
+        except (PermissionError, OSError):
+            continue
+    return None
+
+
+def _extract_seed_from_tar_archive(archive_path: Path) -> str | None:
+    try:
+        with tarfile.open(archive_path, "r:*") as tar:
+            member = None
+            for m in tar.getmembers():
+                name = m.name.lstrip("./")
+                if name.endswith("universe/worlds/default/config.json"):
+                    member = m
+                    break
+            if not member:
+                return None
+            fh = tar.extractfile(member)
+            if fh is None:
+                return None
+            return parse_seed_from_world_config(fh.read().decode("utf-8", errors="ignore"))
+    except (tarfile.TarError, OSError):
+        return None
+
+
+def _extract_seed_from_zip_archive(archive_path: Path) -> str | None:
+    try:
+        with zipfile.ZipFile(archive_path) as zf:
+            target_name = None
+            for name in zf.namelist():
+                norm = name.lstrip("./")
+                if norm.endswith("universe/worlds/default/config.json"):
+                    target_name = name
+                    break
+            if not target_name:
+                return None
+            with zf.open(target_name) as fh:
+                return parse_seed_from_world_config(fh.read().decode("utf-8", errors="ignore"))
+    except (zipfile.BadZipFile, OSError):
+        return None
+
+
+def _extract_seed_from_update_backup_dir(backup_dir: Path) -> str | None:
+    candidates = [
+        backup_dir / "Server" / "universe" / "worlds" / "default" / "config.json",
+        backup_dir / "universe" / "worlds" / "default" / "config.json",
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                return parse_seed_from_world_config(path.read_text())
+        except (PermissionError, OSError):
+            continue
+    return None
+
+
+def get_backup_seed(path: Path, backup_type: str) -> str | None:
+    """
+    Resolve and cache seed metadata for backup files/directories.
+    Cache key uses size+mtime so updates invalidate automatically.
+    """
+    try:
+        st = path.stat()
+    except (PermissionError, OSError):
+        return None
+
+    cache_key = str(path)
+    signature = (int(st.st_mtime), st.st_size, backup_type)
+    with _backup_seed_cache_lock:
+        cached = _backup_seed_cache.get(cache_key)
+        if cached and cached.get("signature") == signature:
+            return cached.get("seed")
+
+    ensure_backup_seed_cache_table()
+    seed_from_db = get_backup_seed_from_db(cache_key, backup_type, signature[0], signature[1])
+    if seed_from_db is not None:
+        with _backup_seed_cache_lock:
+            _backup_seed_cache[cache_key] = {"signature": signature, "seed": seed_from_db}
+        return seed_from_db
+
+    seed = None
+    if backup_type == "backup":
+        lower = path.name.lower()
+        if lower.endswith(".zip"):
+            seed = _extract_seed_from_zip_archive(path)
+        elif lower.endswith(".tar.gz") or lower.endswith(".tgz"):
+            seed = _extract_seed_from_tar_archive(path)
+    elif backup_type == "update-backup":
+        seed = _extract_seed_from_update_backup_dir(path)
+
+    with _backup_seed_cache_lock:
+        _backup_seed_cache[cache_key] = {"signature": signature, "seed": seed}
+    set_backup_seed_in_db(cache_key, backup_type, signature[0], signature[1], seed)
+    return seed
+
+
+def get_world_info() -> dict:
+    return {
+        "active_seed": get_active_world_seed() or "unknown",
+    }
+
+
+def ensure_backup_seed_cache_table() -> None:
+    global _backup_seed_db_ready, _backup_seed_db_disabled
+    if _backup_seed_db_ready or _backup_seed_db_disabled:
+        return
+    with _backup_seed_db_lock:
+        if _backup_seed_db_ready or _backup_seed_db_disabled:
+            return
+        conn = get_db_connection()
+        if not conn:
+            return
+        try:
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS backup_seed_cache (
+                    path TEXT PRIMARY KEY,
+                    backup_type TEXT NOT NULL,
+                    mtime INTEGER NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    seed TEXT,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+            _backup_seed_db_ready = True
+        except Exception:
+            _backup_seed_db_disabled = True
+        finally:
+            conn.close()
+
+
+def get_backup_seed_from_db(path: str, backup_type: str, mtime: int, size_bytes: int) -> str | None:
+    if _backup_seed_db_disabled:
+        return None
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        c = conn.cursor()
+        c.execute("""
+            SELECT seed, backup_type, mtime, size_bytes
+            FROM backup_seed_cache
+            WHERE path = ?
+            LIMIT 1
+        """, (path,))
+        row = c.fetchone()
+        if not row:
+            return None
+        if row["backup_type"] != backup_type:
+            return None
+        if int(row["mtime"]) != int(mtime) or int(row["size_bytes"]) != int(size_bytes):
+            return None
+        return row["seed"]
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def set_backup_seed_in_db(path: str, backup_type: str, mtime: int, size_bytes: int, seed: str | None) -> None:
+    global _backup_seed_db_disabled
+    if _backup_seed_db_disabled:
+        return
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO backup_seed_cache(path, backup_type, mtime, size_bytes, seed, updated_at)
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                backup_type = excluded.backup_type,
+                mtime = excluded.mtime,
+                size_bytes = excluded.size_bytes,
+                seed = excluded.seed,
+                updated_at = excluded.updated_at
+        """, (path, backup_type, int(mtime), int(size_bytes), seed, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+    except Exception:
+        _backup_seed_db_disabled = True
+    finally:
+        conn.close()
 
 
 def get_disk_usage() -> dict:
@@ -976,6 +1231,7 @@ async def index(request: Request, user: str = Depends(verify_credentials)):
         "request": request,
         "allow_control": ALLOW_CONTROL,
         "user": user,
+        "static_version": STATIC_VERSION,
         "backup_dir": str(BACKUP_DIR),
         "service": SERVICE_NAME,
     })
@@ -987,6 +1243,19 @@ async def manage(request: Request, user: str = Depends(verify_credentials)):
         "request": request,
         "allow_control": ALLOW_CONTROL,
         "user": user,
+        "static_version": STATIC_VERSION,
+        "server_dir": str(SERVER_DIR),
+        "service": SERVICE_NAME,
+    })
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup(request: Request, user: str = Depends(verify_credentials)):
+    return templates.TemplateResponse("setup.html", {
+        "request": request,
+        "allow_control": ALLOW_CONTROL,
+        "user": user,
+        "static_version": STATIC_VERSION,
         "server_dir": str(SERVER_DIR),
         "service": SERVICE_NAME,
     })
@@ -999,6 +1268,7 @@ def _get_status_data() -> dict:
     return {
         "service": get_service_status(),
         "backups": get_backups(),
+        "world": get_world_info(),
         "disk": get_disk_usage(),
         "version": get_version_info(),
         "allow_control": ALLOW_CONTROL,
@@ -1182,6 +1452,97 @@ async def api_logs(user: str = Depends(verify_credentials)):
     return JSONResponse({"lines": lines})
 
 
+@app.get("/api/auth/status")
+async def api_auth_status(user: str = Depends(verify_credentials)):
+    loop = asyncio.get_event_loop()
+    lines = await loop.run_in_executor(_executor, get_logs)
+    auth_lines = [ln for ln in lines if re.search(r"auth|token|session", ln, re.IGNORECASE)][-40:]
+    lower_lines = [ln.lower() for ln in auth_lines]
+
+    def last_index(patterns: list[str]) -> int:
+        idx = -1
+        for i, ln in enumerate(lower_lines):
+            if any(p in ln for p in patterns):
+                idx = i
+        return idx
+
+    success_idx = last_index([
+        "starting authenticated flow",
+        "identity token validated",
+        "requesting auth grant",
+        "session service client initialized",
+    ])
+    missing_idx = last_index(["no server tokens configured"])
+    error_idx = last_index(["session token not available", "server authentication unavailable"])
+
+    # Newest relevant event wins to avoid stale warning states.
+    token_missing = missing_idx > success_idx
+    token_error = error_idx > success_idx
+    token_file_exists = (SERVER_DIR / "auth.enc").exists()
+    return JSONResponse({
+        "token_file_exists": token_file_exists,
+        "token_missing": token_missing,
+        "token_error": token_error,
+        "token_configured": success_idx >= 0 and success_idx > missing_idx and success_idx > error_idx,
+        "auth_lines": auth_lines,
+    })
+
+
+@app.post("/api/auth/login/start")
+async def api_auth_login_start(user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    try:
+        send_console_command("/auth login")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "message": "Auth-Login wurde an die Server-Konsole gesendet."}
+
+
+@app.get("/api/token/backups")
+async def api_token_backups(user: str = Depends(verify_credentials)):
+    token_dir = BACKUP_DIR / "auth_tokens"
+    result = []
+    try:
+        if token_dir.exists():
+            for f in sorted(token_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if not f.is_file() or f.suffix != ".enc":
+                    continue
+                st = f.stat()
+                result.append({
+                    "name": f.name,
+                    "size": human_size(st.st_size),
+                    "mtime": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                })
+    except (PermissionError, OSError):
+        pass
+    return JSONResponse({"backups": result})
+
+
+@app.post("/api/token/backup")
+async def api_token_backup(user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    output, rc = await asyncio.to_thread(run_cmd, ["sudo", TOKEN_SCRIPT, "backup"], 120)
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=output or "Token-Backup fehlgeschlagen.")
+    return {"ok": True, "message": "Token-Backup erstellt.", "output": output}
+
+
+@app.post("/api/token/restore")
+async def api_token_restore(request: Request, user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    if not name or Path(name).name != name or not name.endswith(".enc"):
+        raise HTTPException(status_code=400, detail="Ungueltiger Token-Backup Name.")
+    output, rc = await asyncio.to_thread(run_cmd, ["sudo", TOKEN_SCRIPT, "restore", name], 180)
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=output or "Token-Restore fehlgeschlagen.")
+    return {"ok": True, "message": "Token wiederhergestellt und Server neu gestartet.", "output": output}
+
+
 # ---------------------------------------------------------------------------
 # Control Endpoints (only when ALLOW_CONTROL=true)
 # ---------------------------------------------------------------------------
@@ -1222,6 +1583,26 @@ async def api_backup_run(user: str = Depends(verify_credentials)):
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
 
     output, rc = run_cmd(["sudo", "/usr/local/sbin/hytale-backup.sh"], timeout=120)
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=output)
+    return {"ok": True, "output": output}
+
+
+@app.post("/api/backup/create")
+async def api_backup_create(request: Request, user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert. ALLOW_CONTROL=true setzen.")
+
+    body = await request.json()
+    label = str(body.get("label", "")).strip()
+    comment = str(body.get("comment", "")).strip()
+
+    if len(label) > 48:
+        raise HTTPException(status_code=400, detail="Label zu lang (max. 48 Zeichen).")
+    if len(comment) > 240:
+        raise HTTPException(status_code=400, detail="Kommentar zu lang (max. 240 Zeichen).")
+
+    output, rc = run_cmd(["sudo", MANUAL_BACKUP_SCRIPT, label, comment], timeout=240)
     if rc != 0:
         raise HTTPException(status_code=500, detail=output)
     return {"ok": True, "output": output}
@@ -1556,9 +1937,14 @@ async def api_backups_list(user: str = Depends(verify_credentials)):
             for f in sorted(BACKUP_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
                 if f.is_file() and (f.suffix in (".gz", ".zip")):
                     st = f.stat()
+                    meta = read_backup_metadata(f)
                     result.append({
                         "name": f.name, "size": human_size(st.st_size),
                         "mtime": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                        "seed": get_backup_seed(f, "backup") or "unknown",
+                        "label": meta.get("label", ""),
+                        "comment": meta.get("comment", ""),
+                        "source": meta.get("source", ""),
                         "type": "backup", "path": str(f),
                     })
     except (PermissionError, OSError):
@@ -1571,11 +1957,57 @@ async def api_backups_list(user: str = Depends(verify_credentials)):
                 result.append({
                     "name": d.name, "size": "-",
                     "mtime": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                    "seed": get_backup_seed(d, "update-backup") or "unknown",
                     "type": "update-backup", "path": str(d),
                 })
     except (PermissionError, OSError):
         pass
     return JSONResponse({"backups": result})
+
+
+@app.post("/api/backups/restore")
+async def api_backup_restore(request: Request, user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    backup_type = str(body.get("backup_type", "backup")).strip()
+    include_server_state = bool(body.get("include_server_state", False))
+
+    if not name or Path(name).name != name:
+        raise HTTPException(status_code=400, detail="Ungueltiger Backup-Name.")
+
+    if backup_type == "backup":
+        backup_path = BACKUP_DIR / name
+        if not backup_path.exists() or not backup_path.is_file():
+            raise HTTPException(status_code=404, detail="Backup nicht gefunden.")
+        lower_name = backup_path.name.lower()
+        if not (lower_name.endswith(".tar.gz") or lower_name.endswith(".tgz")):
+            raise HTTPException(status_code=400, detail="Nur .tar.gz/.tgz Backups koennen wiederhergestellt werden.")
+    elif backup_type == "update-backup":
+        backup_path = SERVER_DIR / name
+        if not name.startswith(".update_backup_"):
+            raise HTTPException(status_code=400, detail="Ungueltiger Update-Backup Name.")
+        if not backup_path.exists() or not backup_path.is_dir():
+            raise HTTPException(status_code=404, detail="Update-Backup nicht gefunden.")
+    else:
+        raise HTTPException(status_code=400, detail="Ungueltiger Backup-Typ.")
+
+    mode = "full" if include_server_state else "world"
+    output, rc = await asyncio.to_thread(run_cmd, ["sudo", RESTORE_SCRIPT, str(backup_path), mode], 900)
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=output or "Restore fehlgeschlagen.")
+
+    lines = output.splitlines()
+    summary = "\n".join(lines[-20:]) if lines else "Restore erfolgreich."
+    return JSONResponse({
+        "ok": True,
+        "backup_type": backup_type,
+        "mode": mode,
+        "message": "Restore erfolgreich.",
+        "output": summary,
+    })
 
 
 @app.delete("/api/backups/{filename:path}")

@@ -375,7 +375,10 @@ def cleanup_old_data(conn):
     # Delete performance data older than retention period
     c.execute(f"""
         DELETE FROM performance
-        WHERE timestamp < datetime('now', '-{PERF_RETENTION_HOURS} hours')
+        WHERE strftime(
+            '%s',
+            replace(substr(timestamp, 1, 19), 'T', ' ')
+        ) < strftime('%s', 'now', '-{PERF_RETENTION_HOURS} hours')
     """)
     deleted_perf = c.rowcount
 
@@ -468,9 +471,10 @@ def main():
     init_db()
 
     # Connect to database
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")  # Better concurrent access
     conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes
+    conn.execute("PRAGMA busy_timeout=10000")  # Wait up to 10s when DB is busy
 
     # Initial player sync
     initial_player_sync(conn)
@@ -484,25 +488,35 @@ def main():
     while running:
         now = time.time()
 
-        try:
-            # Collect performance metrics
-            if now - last_perf >= PERF_INTERVAL:
+        # Collect performance metrics
+        if now - last_perf >= PERF_INTERVAL:
+            try:
                 perf = collect_performance()
                 save_performance(conn, perf)
+            except Exception as e:
+                print(f"[Worker] Performance error: {e}")
+            finally:
+                # Advance timer even on errors to avoid tight error loops.
                 last_perf = now
 
-            # Check player events
-            if now - last_player >= PLAYER_INTERVAL:
+        # Check player events
+        if now - last_player >= PLAYER_INTERVAL:
+            try:
                 check_player_events(conn)
+            except Exception as e:
+                print(f"[Worker] Player sync error: {e}")
+            finally:
+                # Advance timer even on errors to avoid hammering journal/db.
                 last_player = now
 
-            # Cleanup old data
-            if now - last_cleanup >= CLEANUP_INTERVAL:
+        # Cleanup old data
+        if now - last_cleanup >= CLEANUP_INTERVAL:
+            try:
                 cleanup_old_data(conn)
+            except Exception as e:
+                print(f"[Worker] Cleanup error: {e}")
+            finally:
                 last_cleanup = now
-
-        except Exception as e:
-            print(f"[Worker] Error: {e}")
 
         # Sleep briefly to avoid busy loop
         time.sleep(1)

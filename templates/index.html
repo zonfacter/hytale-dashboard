@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hytale Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ static_version }}" />
 </head>
 <body>
   <header>
@@ -13,6 +13,7 @@
       <nav class="nav">
         <a href="/" class="nav-link active">Dashboard</a>
         <a href="/manage" class="nav-link">Verwaltung</a>
+        <a href="/setup" class="nav-link">Setup</a>
       </nav>
     </div>
     <div class="meta">Service: <code>{{ service }}</code> &middot; Backups: <code>{{ backup_dir }}</code></div>
@@ -67,6 +68,9 @@
       </div>
       <div class="actions" id="backupActions" {% if not allow_control %}hidden{% endif %}>
         <button id="runBackup" class="btn-control">Backup jetzt ausführen</button>
+        <input id="backupLabel" class="console-input" style="max-width:180px;" placeholder="Label (optional)" />
+        <input id="backupComment" class="console-input" style="max-width:280px;" placeholder="Kommentar (optional)" />
+        <button id="runBackupCustom" class="btn-control">Backup mit Name</button>
       </div>
       <div class="table-wrap">
         <table class="table">
@@ -116,6 +120,6 @@
     <small>Polling: 5s &middot; Zugangsschutz: HTTP Basic Auth &middot; User: {{ user }}</small>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ static_version }}"></script>
 </body>
 </html>

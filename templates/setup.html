@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hytale Dashboard - Setup</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ static_version }}" />
+</head>
+<body data-allow-control="{{ 'true' if allow_control else 'false' }}">
+  <header>
+    <div class="header-top">
+      <h1>Hytale Server Dashboard</h1>
+      <nav class="nav">
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/manage" class="nav-link">Verwaltung</a>
+        <a href="/setup" class="nav-link active">Setup</a>
+      </nav>
+    </div>
+    <div class="meta">Service: <code>{{ service }}</code> &middot; Server: <code>{{ server_dir }}</code></div>
+  </header>
+
+  <main>
+    <section class="card card-wide">
+      <h2>Auth Setup</h2>
+      <div id="authStatus" class="kv"><div class="loading">Lade...</div></div>
+      <div class="actions" {% if not allow_control %}hidden{% endif %}>
+        <button id="authLoginStart" class="btn-control">/auth login senden</button>
+        <button id="authStatusRefresh" class="btn-control">Status aktualisieren</button>
+      </div>
+      <pre id="authLog" class="logs">Lade Auth-Logs...</pre>
+    </section>
+
+    <section class="card card-wide">
+      <h2>Token Backups (auth.enc)</h2>
+      <div class="actions" {% if not allow_control %}hidden{% endif %}>
+        <button id="tokenBackupNow" class="btn-control">Token-Backup erstellen</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Datei</th><th>Groesse</th><th>Datum</th>{% if allow_control %}<th>Aktion</th>{% endif %}</tr>
+          </thead>
+          <tbody id="tokenBackupTable">
+            <tr><td colspan="{{ 4 if allow_control else 3 }}" class="muted">Lade...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>User: {{ user }}</small>
+  </footer>
+
+  <script src="/static/setup.js?v={{ static_version }}"></script>
+</body>
+</html>

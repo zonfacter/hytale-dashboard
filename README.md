@@ -19,7 +19,8 @@ Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/
 - **Disk-Auslastung**: Belegung der Server-Partition mit visueller Anzeige
 - **Version**: Aktuelle und verfuegbare Server-Version, manuelles/automatisches Update
 - **Auto-Update-Check**: Stuendliche Versionspruefung mit geplantem Update bei Spielern
-- **Backup-Uebersicht**: Liste der vorhandenen Backups mit Groesse und Datum
+- **Backup-Uebersicht**: Liste der vorhandenen Backups mit Groesse, Datum, Label und Kommentar
+- **Manuelle Backups**: Direkte Erstellung benannter Backups mit optionalem Kommentar
 - **Logs**: Live-Tail der letzten 150 Zeilen (Auto-Polling)
 - **Server-Steuerung**: Start/Stop/Restart Buttons, Backup ausloesen
 
@@ -27,13 +28,20 @@ Web-Dashboard zur Verwaltung eines Hytale Dedicated Servers unter Linux (Debian/
 - **Spieler-Liste**: Online/Offline-Status, Letzter Login, aktuelle Welt, OP-Status
 - **Server-Konsole**: Befehle direkt an den Server senden (via FIFO Pipe)
 - **Konfiguration**: Server Config und World Config live editieren (JSON)
-- **Backup-Verwaltung**: Backups anzeigen, loeschen
+- **Backup-Verwaltung**: Backups und Update-Backups anzeigen, loeschen und wiederherstellen (World/Full)
+- **Seed-Anzeige**: Ermittlung von World-Seeds fuer Backup- und Update-Backup-Eintraege
 - **Mod-Verwaltung**: Mods auflisten, aktivieren/deaktivieren, loeschen, hochladen (.zip)
 - **CurseForge Integration**: Mods direkt aus CurseForge suchen und installieren
 
+### Setup & Auth (`/setup`)
+- **Auth-Status**: Token/Session-Status anhand relevanter Server-Logs
+- **Login Start**: Auth-Flow direkt aus dem Dashboard anstossen
+- **Token-Backups**: Auth-Token separat sichern und gezielt wiederherstellen
+
 ### Monitoring & Performance
 - **SQLite-Datenbank**: Schnelle Datenspeicherung fuer Spieler und Metriken
-- **Background Worker**: Kontinuierliche Datensammlung (TPS, CPU, RAM)
+- **Background Worker**: Kontinuierliche Datensammlung (TPS, CPU, RAM) mit stabiler SQLite-Lock-Behandlung
+- **Stabile Zeitfenster**: Performance-Historie und Cleanup nutzen robuste UTC-Zeitvergleiche
 - **Prometheus Metrics**: `/metrics` Endpoint fuer Grafana-Integration
 - **Performance History**: 24h Verlaufsdaten fuer Graphen
 

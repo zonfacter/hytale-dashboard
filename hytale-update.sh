@@ -8,6 +8,7 @@
 # Sudoers: hytale ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-update.sh
 
 set -euo pipefail
+umask 027
 
 SERVER_DIR="/opt/hytale-server"
 DOWNLOADER_DIR="${SERVER_DIR}/.downloader"
@@ -19,6 +20,8 @@ CREDENTIALS_FILE="${SERVER_DIR}/.hytale-downloader-credentials.json"
 GAME_ZIP="${DOWNLOADER_DIR}/game.zip"
 DOWNLOAD_LOG="${DOWNLOADER_DIR}/download.log"
 SERVICE_NAME="hytale.service"
+HYTALE_USER="hytale"
+HYTALE_GROUP="hytale"
 
 # Files/dirs to preserve during update
 # Note: Universe path changed in Hytale Server 2026.01 to Server/universe/
@@ -62,8 +65,82 @@ get_current_version() {
     fi
 }
 
+set_owner_if_exists() {
+    local target="$1"
+    if [[ -e "$target" || -L "$target" ]]; then
+        chown "${HYTALE_USER}:${HYTALE_GROUP}" "$target" 2>/dev/null || true
+    fi
+}
+
+normalize_server_permissions() {
+    # Update runs as root via sudo; normalize ownership/modes for service runtime.
+    chown -R "${HYTALE_USER}:${HYTALE_GROUP}" "$SERVER_DIR"
+    chmod 770 "$SERVER_DIR" 2>/dev/null || true
+
+    [[ -f "${SERVER_DIR}/start.sh" ]] && chmod 750 "${SERVER_DIR}/start.sh"
+    [[ -f "${SERVER_DIR}/start-wrapper.sh" ]] && chmod 750 "${SERVER_DIR}/start-wrapper.sh"
+    [[ -x "$DOWNLOADER_BIN" ]] && chmod 750 "$DOWNLOADER_BIN"
+    [[ -d "${SERVER_DIR}/mods" ]] && chmod 770 "${SERVER_DIR}/mods"
+    [[ -d "${SERVER_DIR}/backups" ]] && chmod 750 "${SERVER_DIR}/backups"
+    [[ -f "${SERVER_DIR}/config.json" ]] && chmod 664 "${SERVER_DIR}/config.json"
+    [[ -f "${SERVER_DIR}/permissions.json" ]] && chmod 664 "${SERVER_DIR}/permissions.json"
+    [[ -f "${SERVER_DIR}/bans.json" ]] && chmod 664 "${SERVER_DIR}/bans.json"
+    [[ -f "${SERVER_DIR}/whitelist.json" ]] && chmod 664 "${SERVER_DIR}/whitelist.json"
+    [[ -f "$VERSION_FILE" ]] && chmod 664 "$VERSION_FILE"
+    [[ -f "$LATEST_VERSION_FILE" ]] && chmod 664 "$LATEST_VERSION_FILE"
+
+    # Dashboard writes world settings via hytale group.
+    if [[ -f "${SERVER_DIR}/Server/universe/worlds/default/config.json" ]]; then
+        chmod 664 "${SERVER_DIR}/Server/universe/worlds/default/config.json"
+    elif [[ -f "${SERVER_DIR}/universe/worlds/default/config.json" ]]; then
+        chmod 664 "${SERVER_DIR}/universe/worlds/default/config.json"
+    fi
+
+    if [[ -p "${SERVER_DIR}/.console_pipe" ]]; then
+        chmod 660 "${SERVER_DIR}/.console_pipe"
+    fi
+
+    # Dashboard runtime state files must remain writable for hytale-web.
+    if id -u hytale-web >/dev/null 2>&1; then
+        local dashboard_state
+        for dashboard_state in \
+            "${SERVER_DIR}/.dashboard_config.json" \
+            "${SERVER_DIR}/.last_version_check" \
+            "${SERVER_DIR}/.update_schedule" \
+            "${SERVER_DIR}/.update_command_cursor" \
+            "${SERVER_DIR}/.update_check_lock" \
+            "${SERVER_DIR}/.update_after_backup"; do
+            if [[ -e "$dashboard_state" || -L "$dashboard_state" ]]; then
+                chown "hytale-web:${HYTALE_GROUP}" "$dashboard_state" 2>/dev/null || true
+                chmod 664 "$dashboard_state" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+overlay_preserved_paths_into_staging() {
+    local staging_dir="$1"
+    local preserve src dst
+
+    # Re-apply preserved paths from current server state into staging.
+    # This is required for nested preserves like Server/universe when
+    # the package ships a full top-level Server directory.
+    for preserve in "${PRESERVE[@]}"; do
+        src="${SERVER_DIR}/${preserve}"
+        dst="${staging_dir}/${preserve}"
+        if [[ ! -e "$src" && ! -L "$src" ]]; then
+            continue
+        fi
+        mkdir -p "$(dirname "$dst")"
+        rm -rf "$dst"
+        cp -a "$src" "$dst"
+    done
+}
+
 ensure_downloader() {
     mkdir -p "$DOWNLOADER_DIR"
+    set_owner_if_exists "$DOWNLOADER_DIR"
+    chmod 750 "$DOWNLOADER_DIR" 2>/dev/null || true
 
     if [[ -x "$DOWNLOADER_BIN" ]]; then
         return 0
@@ -92,7 +169,8 @@ ensure_downloader() {
     fi
 
     cp "$bin_path" "$DOWNLOADER_BIN"
-    chmod +x "$DOWNLOADER_BIN"
+    chmod 750 "$DOWNLOADER_BIN"
+    set_owner_if_exists "$DOWNLOADER_BIN"
     rm -rf "$tmp_dir"
 }
 
@@ -101,6 +179,8 @@ query_latest_version() {
     local output
     output="$("$DOWNLOADER_BIN" -print-version -credentials-path "$CREDENTIALS_FILE" 2>&1)" || true
     echo "$output" > "$DOWNLOAD_LOG"
+    chmod 640 "$DOWNLOAD_LOG" 2>/dev/null || true
+    set_owner_if_exists "$DOWNLOAD_LOG"
     # The output should contain the version string (trim whitespace)
     local version
     version="$(echo "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n 1 | tr -d '[:space:]')"
@@ -117,6 +197,8 @@ download_game() {
     for attempt in $(seq 1 $max_attempts); do
         rm -f "$GAME_ZIP"
         "$DOWNLOADER_BIN" -download-path "$GAME_ZIP" -credentials-path "$CREDENTIALS_FILE" > "$DOWNLOAD_LOG" 2>&1 || true
+        chmod 640 "$DOWNLOAD_LOG" 2>/dev/null || true
+        set_owner_if_exists "$DOWNLOAD_LOG"
 
         if [[ -f "$GAME_ZIP" ]]; then
             if unzip -tq "$GAME_ZIP" >/dev/null 2>&1; then
@@ -143,6 +225,8 @@ do_check() {
 
     # Store latest version
     echo "$latest" > "$LATEST_VERSION_FILE"
+    chmod 640 "$LATEST_VERSION_FILE" 2>/dev/null || true
+    set_owner_if_exists "$LATEST_VERSION_FILE"
 
     if [[ -z "$latest" || "$latest" == "unknown" ]]; then
         json_output "$current" "unknown" "false" "Version konnte nicht ermittelt werden"
@@ -228,6 +312,9 @@ do_update() {
     done
     shopt -u dotglob nullglob
 
+    # Ensure preserved paths survive even when parent directory gets replaced.
+    overlay_preserved_paths_into_staging "$staging_dir"
+
     # Create backup of current files being replaced
     local backup_dir="${SERVER_DIR}/.update_backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
@@ -258,6 +345,9 @@ do_update() {
 
     # Remove auto-update flag if present
     rm -f "${SERVER_DIR}/.update_after_backup"
+
+    # Ensure final ownership/modes are consistent for service runtime.
+    normalize_server_permissions
 
     # Start server
     systemctl start "$SERVICE_NAME" 2>/dev/null || true

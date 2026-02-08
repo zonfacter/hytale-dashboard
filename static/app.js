@@ -89,18 +89,25 @@
     // Backups
     const backups = s.backups || {};
     const files = backups.files || [];
+    const world = s.world || {};
+    const activeSeed = world.active_seed && world.active_seed !== "unknown"
+      ? `<code>${world.active_seed}</code>`
+      : '<span class="muted">n/a</span>';
     kv(el("backupSummary"), [
       ["Anzahl", backups.count || 0],
       ["Letztes Backup", backups.last_backup || "n/a"],
+      ["Aktiver Seed", activeSeed],
     ]);
 
     const tbody = el("backupTable");
     if (files.length === 0) {
       tbody.innerHTML = '<tr><td colspan="3" class="muted">Keine Backups gefunden</td></tr>';
     } else {
-      tbody.innerHTML = files.slice(0, 30).map(f =>
-        `<tr><td><code>${f.name}</code></td><td>${f.size}</td><td>${f.mtime}</td></tr>`
-      ).join("");
+      tbody.innerHTML = files.slice(0, 30).map(f => {
+        const label = f.label ? `<div><strong>${f.label}</strong></div>` : "";
+        const comment = f.comment ? `<div class="muted">${f.comment}</div>` : "";
+        return `<tr><td>${label}<code>${f.name}</code>${comment}</td><td>${f.size}</td><td>${f.mtime}</td></tr>`;
+      }).join("");
     }
 
     // Control visibility
@@ -204,6 +211,32 @@
           await refreshLogs();
           backupBtn.disabled = false;
           backupBtn.textContent = "Backup jetzt ausführen";
+        }, 5000);
+      });
+    }
+
+    const backupCustomBtn = el("runBackupCustom");
+    if (backupCustomBtn) {
+      backupCustomBtn.addEventListener("click", async () => {
+        const label = (el("backupLabel")?.value || "").trim();
+        const comment = (el("backupComment")?.value || "").trim();
+        backupCustomBtn.disabled = true;
+        backupCustomBtn.textContent = "Backup laeuft...";
+        const result = await api("/api/backup/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, comment }),
+        });
+        if (result && result.ok) {
+          toast("Manuelles Backup erstellt");
+          if (el("backupLabel")) el("backupLabel").value = "";
+          if (el("backupComment")) el("backupComment").value = "";
+        }
+        setTimeout(async () => {
+          await refreshStatus();
+          await refreshLogs();
+          backupCustomBtn.disabled = false;
+          backupCustomBtn.textContent = "Backup mit Name";
         }, 5000);
       });
     }

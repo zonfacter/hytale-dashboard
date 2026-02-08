@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hytale Dashboard - Verwaltung</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ static_version }}" />
 </head>
   <body data-allow-control="{{ 'true' if allow_control else 'false' }}">
   <header>
@@ -13,6 +13,7 @@
       <nav class="nav">
         <a href="/" class="nav-link">Dashboard</a>
         <a href="/manage" class="nav-link active">Verwaltung</a>
+        <a href="/setup" class="nav-link">Setup</a>
       </nav>
     </div>
     <div class="meta">Service: <code>{{ service }}</code> &middot; Server: <code>{{ server_dir }}</code></div>
@@ -77,10 +78,10 @@
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>Datei</th><th>Groesse</th><th>Datum</th><th>Typ</th>{% if allow_control %}<th>Aktionen</th>{% endif %}</tr>
+            <tr><th>Datei</th><th>Groesse</th><th>Datum</th><th>Seed</th><th>Typ</th>{% if allow_control %}<th>Aktionen</th>{% endif %}</tr>
           </thead>
           <tbody id="backupMgmtTable">
-            <tr><td colspan="5" class="muted">Lade...</td></tr>
+            <tr><td colspan="{{ 6 if allow_control else 5 }}" class="muted">Lade...</td></tr>
           </tbody>
         </table>
       </div>
@@ -213,6 +214,6 @@
     <small>User: {{ user }}</small>
   </footer>
 
-  <script src="/static/manage.js"></script>
+  <script src="/static/manage.js?v={{ static_version }}"></script>
 </body>
 </html>

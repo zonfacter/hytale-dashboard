@@ -201,22 +201,35 @@
     const data = await api("/api/backups/list");
     if (!data) return;
     const tbody = el("backupMgmtTable");
+    const allowControl = document.body.dataset.allowControl === "true";
+    const backupColspan = allowControl ? 6 : 5;
     const backups = data.backups || [];
     if (backups.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="muted">Keine Backups</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="${backupColspan}" class="muted">Keine Backups</td></tr>`;
       return;
     }
     tbody.innerHTML = backups.map(b => {
       const typeBadge = b.type === "backup"
         ? '<span class="badge badge-active">Backup</span>'
         : '<span class="badge badge-inactive">Update</span>';
-      const actions = `<button class="btn-del" data-name="${b.name}" data-type="${b.type}">Loeschen</button>`;
+      const seed = b.seed && b.seed !== "unknown" ? `<code>${b.seed}</code>` : '<span class="muted">n/a</span>';
+      const label = b.label ? `<div><strong>${b.label}</strong></div>` : "";
+      const comment = b.comment ? `<div class="muted">${b.comment}</div>` : "";
+      const canRestore = b.type === "backup" || b.type === "update-backup";
+      const restoreBtn = (allowControl && canRestore)
+        ? `<button class="btn-restore" data-name="${b.name}" data-type="${b.type}">Restore</button>`
+        : "";
+      const deleteBtn = allowControl
+        ? `<button class="btn-del" data-name="${b.name}" data-type="${b.type}">Loeschen</button>`
+        : "";
+      const actions = `${restoreBtn}${deleteBtn}`;
       return `<tr>
-        <td><code>${b.name}</code></td>
+        <td>${label}<code>${b.name}</code>${comment}</td>
         <td>${b.size}</td>
         <td>${b.mtime}</td>
+        <td>${seed}</td>
         <td>${typeBadge}</td>
-        <td>${actions}</td>
+        ${allowControl ? `<td>${actions}</td>` : ""}
       </tr>`;
     }).join("");
 
@@ -230,6 +243,40 @@
         if (result && result.ok) {
           toast("Backup geloescht");
           await refreshBackups();
+        } else {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Attach restore handlers
+    tbody.querySelectorAll(".btn-restore").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const name = btn.dataset.name;
+        const backupType = btn.dataset.type || "backup";
+        const typeLabel = backupType === "update-backup" ? "Update-Backup" : "Backup";
+        if (!confirm(`${typeLabel} '${name}' wiederherstellen? Server wird dabei kurz gestoppt.`)) return;
+
+        const includeServerState = confirm(
+          "Voll-Restore ausfuehren?\n\n" +
+          "OK = Welt + auth/config/bans/whitelist/mods\n" +
+          "Abbrechen = nur Welt (Server/universe)"
+        );
+
+        btn.disabled = true;
+        const result = await api("/api/backups/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            backup_type: backupType,
+            include_server_state: includeServerState,
+          }),
+        });
+        if (result && result.ok) {
+          toast(`Restore erfolgreich (${result.mode})`);
+          await Promise.all([refreshBackups(), refreshPlayers(), refreshQuery()]);
+          setTimeout(() => refreshConsole(), 1000);
         } else {
           btn.disabled = false;
         }

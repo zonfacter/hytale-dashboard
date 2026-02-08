@@ -275,6 +275,36 @@ install_update_script() {
     print_success "Update-Script installiert"
 }
 
+install_restore_script() {
+    print_header "Installiere Restore-Script"
+
+    print_step "Kopiere hytale-restore.sh..."
+    cp "$DASHBOARD_DIR/hytale-restore.sh" /usr/local/sbin/hytale-restore.sh
+    chmod 755 /usr/local/sbin/hytale-restore.sh
+
+    print_success "Restore-Script installiert"
+}
+
+install_token_script() {
+    print_header "Installiere Token-Script"
+
+    print_step "Kopiere hytale-token.sh..."
+    cp "$DASHBOARD_DIR/hytale-token.sh" /usr/local/sbin/hytale-token.sh
+    chmod 755 /usr/local/sbin/hytale-token.sh
+
+    print_success "Token-Script installiert"
+}
+
+install_manual_backup_script() {
+    print_header "Installiere Manuelles Backup-Script"
+
+    print_step "Kopiere hytale-backup-manual.sh..."
+    cp "$DASHBOARD_DIR/hytale-backup-manual.sh" /usr/local/sbin/hytale-backup-manual.sh
+    chmod 755 /usr/local/sbin/hytale-backup-manual.sh
+
+    print_success "Manuelles Backup-Script installiert"
+}
+
 configure_systemd_services() {
     print_header "Konfiguriere Systemd Services"
 
@@ -342,9 +372,16 @@ $HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart hytale.service
 
 # Backup-Script
 $HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-backup.sh
+$HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-backup-manual.sh
 
 # Update-Script
 $HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-update.sh
+
+# Restore-Script
+$HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-restore.sh
+
+# Token-Script
+$HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /usr/local/sbin/hytale-token.sh
 
 # Systemd Override-Verzeichnis
 $HYTALE_WEB_USER ALL=(ALL) NOPASSWD: /bin/mkdir -p /etc/systemd/system/hytale.service.d
@@ -612,6 +649,9 @@ main() {
     install_dashboard
     install_wrapper_script
     install_update_script
+    install_restore_script
+    install_token_script
+    install_manual_backup_script
     configure_systemd_services
     configure_sudoers
     configure_firewall
