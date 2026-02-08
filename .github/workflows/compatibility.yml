@@ -1,0 +1,83 @@
+name: Compatibility Gate
+
+on:
+  pull_request:
+  push:
+    branches: [ master ]
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Syntax Check
+        run: |
+          python -m py_compile app.py
+          python -m py_compile worker.py
+
+      - name: API Contract Check
+        run: |
+          set -euo pipefail
+          required=(
+            '@app.get("/api/status")'
+            '@app.get("/api/logs")'
+            '@app.get("/api/console/output")'
+            '@app.get("/api/backups/list")'
+            '@app.post("/api/backups/restore")'
+            '@app.post("/api/backups/create")'
+            'def get_logs() -> list[str]'
+            'def _get_console_output('
+            'DOCKER_MODE'
+            'HYTALE_CONTAINER'
+          )
+          for token in "${required[@]}"; do
+            grep -F "$token" app.py >/dev/null || { echo "Missing contract token: $token"; exit 1; }
+          done
+
+  docker-integration-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dashboard (candidate)
+        uses: actions/checkout@v4
+        with:
+          path: dashboard-source
+
+      - name: Checkout hytale-docker
+        uses: actions/checkout@v4
+        with:
+          repository: zonfacter/hytale-docker
+          path: hytale-docker
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Replace submodule source with candidate dashboard
+        run: |
+          set -euo pipefail
+          rm -rf hytale-docker/dashboard-source
+          mkdir -p hytale-docker/dashboard-source
+          rsync -a --delete --exclude '.git' dashboard-source/ hytale-docker/dashboard-source/
+
+      - name: Apply Docker patch pipeline
+        run: |
+          set -euo pipefail
+          python hytale-docker/dashboard/apply_docker_patches.py hytale-docker/dashboard-source
+          cp hytale-docker/dashboard/docker_overrides.py hytale-docker/dashboard-source/docker_overrides.py
+          cp hytale-docker/dashboard/setup_routes.py hytale-docker/dashboard-source/setup_routes.py
+          cp hytale-docker/dashboard/tailscale_routes.py hytale-docker/dashboard-source/tailscale_routes.py
+          DASHBOARD_DIR="$(pwd)/hytale-docker/dashboard-source" bash hytale-docker/scripts/patch-dashboard-setup.sh
+          DASHBOARD_DIR="$(pwd)/hytale-docker/dashboard-source" bash hytale-docker/scripts/patch-dashboard-tailscale.sh
+
+      - name: Verify patched app compiles
+        run: |
+          python -m py_compile hytale-docker/dashboard-source/app.py
+          grep -F "hard_log_console_overrides" hytale-docker/dashboard-source/app.py >/dev/null
