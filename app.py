@@ -33,13 +33,29 @@ _CF_API_KEY_ENV = os.environ.get("CF_API_KEY", "")
 
 # Docker mode detection
 # Set DOCKER_MODE=true or HYTALE_CONTAINER=container_name for Docker
-DOCKER_MODE = os.environ.get("DOCKER_MODE", "false").lower() == "true"
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _has_container_marker() -> bool:
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(errors="ignore").lower()
+    except OSError:
+        return False
+    return "docker" in cgroup or "containerd" in cgroup or "kubepods" in cgroup
+
+
+DOCKER_MODE = _is_truthy(os.environ.get("DOCKER_MODE"))
+if _is_truthy(os.environ.get("HYTALE_DOCKER_MODE")):
+    DOCKER_MODE = True
 HYTALE_CONTAINER = os.environ.get("HYTALE_CONTAINER", "")  # Docker container name
 if HYTALE_CONTAINER:
     DOCKER_MODE = True
 
 # Auto-detect Docker: check if running inside a container
-if not DOCKER_MODE and Path("/.dockerenv").exists():
+if not DOCKER_MODE and _has_container_marker():
     DOCKER_MODE = True
 
 SERVICE_NAME = "hytale.service"
@@ -65,6 +81,7 @@ UPDATE_COMMAND_CURSOR_FILE = SERVER_DIR / ".update_command_cursor"
 UPDATE_CHECK_LOCK = SERVER_DIR / ".update_check_lock"
 UPDATE_NOTICE_PREFIX = "[Dashboard]"
 CONSOLE_PIPE = SERVER_DIR / ".console_pipe"
+SERVER_COMMAND_FILE = SERVER_DIR / ".server_command"
 MODS_DIR = SERVER_DIR / "mods"
 # Universe path changed in Hytale Server 2026.01 to Server/universe/
 # Check new location first, fall back to old location for backwards compatibility
@@ -987,9 +1004,12 @@ def send_console_command(command: str, ignore_errors: bool = False) -> None:
     by should_allow_console_command(). Additional defense-in-depth checks
     are performed here.
     """
-    if not CONSOLE_PIPE.exists():
+    target = SERVER_COMMAND_FILE if DOCKER_MODE and SERVER_COMMAND_FILE.exists() else CONSOLE_PIPE
+    if not target.exists():
         if ignore_errors:
             return
+        if DOCKER_MODE:
+            raise RuntimeError("Kein Docker-Command-Adapter gefunden (.server_command/.console_pipe).")
         raise RuntimeError("Konsolen-Pipe nicht gefunden. Server laeuft nicht mit Wrapper.")
     
     # Defense in depth: Ensure no null bytes in command
@@ -1005,7 +1025,7 @@ def send_console_command(command: str, ignore_errors: bool = False) -> None:
         return
     
     try:
-        fd = os.open(str(CONSOLE_PIPE), os.O_WRONLY | os.O_NONBLOCK)
+        fd = os.open(str(target), os.O_WRONLY | os.O_NONBLOCK)
         # Only write the command itself, newline is added here
         # Using strict encoding to reject invalid UTF-8 rather than silently dropping characters
         os.write(fd, (command + "\n").encode('utf-8', errors='strict'))
@@ -1860,7 +1880,10 @@ async def api_console_send(request: Request, user: str = Depends(verify_credenti
     if not is_allowed:
         raise HTTPException(status_code=400, detail=error_msg)
 
-    if not CONSOLE_PIPE.exists():
+    if DOCKER_MODE:
+        if not SERVER_COMMAND_FILE.exists() and not CONSOLE_PIPE.exists():
+            raise HTTPException(status_code=500, detail="Kein Docker-Command-Adapter gefunden (.server_command/.console_pipe).")
+    elif not CONSOLE_PIPE.exists():
         raise HTTPException(status_code=500, detail="Konsolen-Pipe nicht gefunden. Server laeuft nicht mit Wrapper.")
 
     try:
