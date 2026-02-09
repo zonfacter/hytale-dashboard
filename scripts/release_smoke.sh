@@ -80,9 +80,15 @@ check_backups_list() {
 import json
 import sys
 data = json.loads(sys.argv[1])
-if "files" not in data or "count" not in data:
-    raise SystemExit("missing backup list keys")
-print("PASS: /api/backups/list")
+if "files" in data and "count" in data:
+    print("PASS: /api/backups/list")
+    raise SystemExit(0)
+if "backups" in data and isinstance(data["backups"], dict):
+    nested = data["backups"]
+    if "files" in nested and "count" in nested:
+        print("PASS: /api/backups/list")
+        raise SystemExit(0)
+raise SystemExit("missing backup list keys")
 PY
 }
 
@@ -117,4 +123,3 @@ check_console_output
 check_backups_list
 check_console_send
 echo "[smoke] OK"
-
