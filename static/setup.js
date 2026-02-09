@@ -104,16 +104,63 @@
   }
 
   function setupActions() {
+    async function sendAuthLogin(mode) {
+      const payload = mode ? { mode } : {};
+      let result = await api("/api/auth/login/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      // Backwards-compatible fallback for mixed runtime states:
+      // if setup route wiring differs, send command via generic console API.
+      if (!result) {
+        const command = mode ? `/auth login ${mode}` : "/auth login";
+        result = await api("/api/console/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+      }
+      return result;
+    }
+
     const authBtn = el("authLoginStart");
     if (authBtn) {
       authBtn.addEventListener("click", async () => {
         authBtn.disabled = true;
-        const result = await api("/api/auth/login/start", { method: "POST" });
+        const result = await sendAuthLogin("");
         if (result && result.ok) {
           toast(result.message || "Befehl gesendet", "success");
           setTimeout(refreshAuthStatus, 1500);
         }
         authBtn.disabled = false;
+      });
+    }
+
+    const authBrowserBtn = el("authLoginBrowser");
+    if (authBrowserBtn) {
+      authBrowserBtn.addEventListener("click", async () => {
+        authBrowserBtn.disabled = true;
+        const result = await sendAuthLogin("browser");
+        if (result && result.ok) {
+          toast(result.message || "Browser-Login gesendet", "success");
+          setTimeout(refreshAuthStatus, 1500);
+        }
+        authBrowserBtn.disabled = false;
+      });
+    }
+
+    const authDeviceBtn = el("authLoginDevice");
+    if (authDeviceBtn) {
+      authDeviceBtn.addEventListener("click", async () => {
+        authDeviceBtn.disabled = true;
+        const result = await sendAuthLogin("device");
+        if (result && result.ok) {
+          toast(result.message || "Device-Login gesendet", "success");
+          setTimeout(refreshAuthStatus, 1500);
+        }
+        authDeviceBtn.disabled = false;
       });
     }
 

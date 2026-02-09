@@ -1516,15 +1516,54 @@ async def api_auth_status(user: str = Depends(verify_credentials)):
     })
 
 
+def _build_auth_login_command(mode: str) -> str:
+    mode_norm = (mode or "").strip().lower()
+    if mode_norm in ("device", "browser"):
+        return f"/auth login {mode_norm}"
+    return "/auth login"
+
+
 @app.post("/api/auth/login/start")
-async def api_auth_login_start(user: str = Depends(verify_credentials)):
+async def api_auth_login_start(request: Request, user: str = Depends(verify_credentials)):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    mode = ""
     try:
-        send_console_command("/auth login")
+        body = await request.json()
+        if isinstance(body, dict):
+            mode = str(body.get("mode", "")).strip()
+    except Exception:
+        mode = ""
+    command = _build_auth_login_command(mode)
+    try:
+        send_console_command(command)
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"ok": True, "message": "Auth-Login wurde an die Server-Konsole gesendet."}
+    return {"ok": True, "message": "Auth-Login wurde an die Server-Konsole gesendet.", "command": command}
+
+
+@app.post("/api/auth/login/device")
+async def api_auth_login_device(user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    command = "/auth login device"
+    try:
+        send_console_command(command)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "message": "Device-Login wurde an die Server-Konsole gesendet.", "command": command}
+
+
+@app.post("/api/auth/login/browser")
+async def api_auth_login_browser(user: str = Depends(verify_credentials)):
+    if not ALLOW_CONTROL:
+        raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
+    command = "/auth login browser"
+    try:
+        send_console_command(command)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "message": "Browser-Login wurde an die Server-Konsole gesendet.", "command": command}
 
 
 @app.get("/api/token/backups")
