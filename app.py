@@ -1946,9 +1946,29 @@ async def _api_console_dispatch(request: Request):
 def _get_console_output(since: str = "") -> list:
     """Sync function to get console output."""
     if DOCKER_MODE and HYTALE_CONTAINER:
-        # Docker mode
-        cmd = ["docker", "logs", "--tail", "50", HYTALE_CONTAINER]
-        # Note: Docker logs doesn't support --since in the same way
+        # Docker mode: prefer direct supervisor tails for server process output,
+        # then include container logs as fallback/context.
+        merged: list[str] = []
+        for cmd in (
+            ["supervisorctl", "tail", "-120", "hytale-server", "stdout"],
+            ["supervisorctl", "tail", "-80", "hytale-server", "stderr"],
+            ["docker", "logs", "--tail", "120", HYTALE_CONTAINER],
+        ):
+            output, rc = run_cmd(cmd, timeout=10)
+            if rc == 0 and output.strip():
+                merged.extend(output.splitlines())
+
+        if not merged:
+            return ["[Fehler: Keine Konsolen-Ausgabe verfuegbar]"]
+
+        # Keep order and remove adjacent duplicates that are common across sources.
+        deduped: list[str] = []
+        last = None
+        for line in merged:
+            if line != last:
+                deduped.append(line)
+            last = line
+        return deduped[-200:]
     else:
         # Native mode
         cmd = ["journalctl", "-u", "hytale", "-n50", "--no-pager"]
