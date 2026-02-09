@@ -10,6 +10,7 @@
 - [ ] `COMPATIBILITY.md` reviewed
 - [ ] No breaking change to required endpoints/symbols
 - [ ] If breaking: changelog + versioning updated
+- [ ] `bash scripts/contract_check.sh` executed
 
 ## Docker Impact
 - `docker_impact`: <!-- none | low | medium | high -->
@@ -21,3 +22,6 @@
 ## Rollout Notes
 - Required migration steps:
 - Rollback path:
+
+## Release Gate
+- [ ] `RELEASE_CHECKLIST.md` reviewed

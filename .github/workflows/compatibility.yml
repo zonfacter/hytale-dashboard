@@ -24,22 +24,7 @@ jobs:
 
       - name: API Contract Check
         run: |
-          set -euo pipefail
-          required=(
-            '@app.get("/api/status")'
-            '@app.get("/api/logs")'
-            '@app.get("/api/console/output")'
-            '@app.get("/api/backups/list")'
-            '@app.post("/api/backups/restore")'
-            '@app.post("/api/backups/create")'
-            'def get_logs() -> list[str]'
-            'def _get_console_output('
-            'DOCKER_MODE'
-            'HYTALE_CONTAINER'
-          )
-          for token in "${required[@]}"; do
-            grep -F "$token" app.py >/dev/null || { echo "Missing contract token: $token"; exit 1; }
-          done
+          bash scripts/contract_check.sh app.py
 
   docker-integration-simulation:
     runs-on: ubuntu-latest

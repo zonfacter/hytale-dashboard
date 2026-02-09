@@ -141,6 +141,23 @@ Das Dashboard erkennt automatisch ob es in Docker laeuft und verwendet entsprech
 | Start/Stop | `systemctl start/stop` | `docker start/stop` |
 | CPU/RAM | `ps` | `docker stats` |
 
+### Compatibility & Release Gate
+
+Fuer stabile Releases (weniger Hotfixes) werden diese Checks vor Merge nach `master` verpflichtend ausgefuehrt:
+
+```bash
+# 1) API/Symbol-Contract
+bash scripts/contract_check.sh
+
+# 2) Runtime-Preflight auf Zielsystem/Container
+bash scripts/preflight_compat.sh --server-dir /opt/hytale-server
+
+# 3) API-Smoke (mit gueltigen Dashboard-Credentials)
+BASE_URL=http://<host>:<port> DASH_USER=<user> DASH_PASS=<pass> bash scripts/release_smoke.sh
+```
+
+Die vollstaendige Checkliste steht in `RELEASE_CHECKLIST.md`.
+
 ### Mit Prometheus & Grafana
 
 Fuer vollstaendiges Monitoring entkommentiere die Services in `docker-compose.yml`:
