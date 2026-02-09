@@ -105,6 +105,19 @@
 
   function setupActions() {
     async function sendAuthLogin(mode) {
+      const command = mode ? `/auth login ${mode}` : "/auth login";
+
+      // In Docker runtimes, /api/auth/login/start may be hard-overridden.
+      // Use console send for explicit mode commands to avoid mode loss.
+      if (mode) {
+        const direct = await api("/api/console/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+        if (direct) return direct;
+      }
+
       const payload = mode ? { mode } : {};
       let result = await api("/api/auth/login/start", {
         method: "POST",
@@ -112,10 +125,7 @@
         body: JSON.stringify(payload),
       });
 
-      // Backwards-compatible fallback for mixed runtime states:
-      // if setup route wiring differs, send command via generic console API.
       if (!result) {
-        const command = mode ? `/auth login ${mode}` : "/auth login";
         result = await api("/api/console/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
