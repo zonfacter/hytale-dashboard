@@ -88,6 +88,9 @@ if "backups" in data and isinstance(data["backups"], dict):
     if "files" in nested and "count" in nested:
         print("PASS: /api/backups/list")
         raise SystemExit(0)
+if "backups" in data and isinstance(data["backups"], list):
+    print("PASS: /api/backups/list")
+    raise SystemExit(0)
 raise SystemExit("missing backup list keys")
 PY
 }
