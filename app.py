@@ -1906,6 +1906,16 @@ async def api_player_op(request: Request, user: str = Depends(verify_credentials
 
 @app.post("/api/console/send")
 async def api_console_send(request: Request, user: str = Depends(verify_credentials)):
+    return await _api_console_dispatch(request)
+
+
+@app.post("/api/console/command")
+async def api_console_command(request: Request, user: str = Depends(verify_credentials)):
+    # Compatibility alias used by setup wizard in Docker overlays.
+    return await _api_console_dispatch(request)
+
+
+async def _api_console_dispatch(request: Request):
     if not ALLOW_CONTROL:
         raise HTTPException(status_code=403, detail="Control-Aktionen deaktiviert.")
 
