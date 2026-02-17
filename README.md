@@ -139,6 +139,7 @@ Das Dashboard erkennt automatisch ob es in Docker laeuft und verwendet entsprech
 | Server Status | `systemctl show` | `docker inspect` |
 | Logs | `journalctl` | `docker logs` |
 | Start/Stop | `systemctl start/stop` | `docker start/stop` |
+| Update (Stop/Start) | `systemctl stop/start` | `docker stop/start` |
 | CPU/RAM | `ps` | `docker stats` |
 
 ### Compatibility & Release Gate

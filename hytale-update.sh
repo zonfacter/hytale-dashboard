@@ -23,6 +23,10 @@ SERVICE_NAME="hytale.service"
 HYTALE_USER="hytale"
 HYTALE_GROUP="hytale"
 
+# Docker mode: use docker stop/start instead of systemctl
+IS_DOCKER="${DOCKER_MODE:-false}"
+CONTAINER_NAME="${HYTALE_CONTAINER:-hytale-server}"
+
 # Files/dirs to preserve during update
 # Note: Universe path changed in Hytale Server 2026.01 to Server/universe/
 # We preserve both for backwards compatibility
@@ -57,6 +61,22 @@ json_error() {
     exit 1
 }
 
+stop_server() {
+    if [[ "$IS_DOCKER" == "true" ]]; then
+        docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    else
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    fi
+}
+
+start_server() {
+    if [[ "$IS_DOCKER" == "true" ]]; then
+        docker start "$CONTAINER_NAME" 2>/dev/null || true
+    else
+        systemctl start "$SERVICE_NAME" 2>/dev/null || true
+    fi
+}
+
 get_current_version() {
     if [[ -f "$VERSION_FILE" ]]; then
         cat "$VERSION_FILE" | tr -d '[:space:]'
@@ -73,6 +93,10 @@ set_owner_if_exists() {
 }
 
 normalize_server_permissions() {
+    # Docker mode: permissions are managed by host volume mounts
+    if [[ "$IS_DOCKER" == "true" ]]; then
+        return 0
+    fi
     # Update runs as root via sudo; normalize ownership/modes for service runtime.
     chown -R "${HYTALE_USER}:${HYTALE_GROUP}" "$SERVER_DIR"
     chmod 770 "$SERVER_DIR" 2>/dev/null || true
@@ -181,14 +205,14 @@ query_latest_version() {
     echo "$output" > "$DOWNLOAD_LOG"
     chmod 640 "$DOWNLOAD_LOG" 2>/dev/null || true
     set_owner_if_exists "$DOWNLOAD_LOG"
-    # The output should contain the version string (trim whitespace)
+    # The output should contain the version string (e.g. 2026.02.06-aa1b071c2)
     local version
-    version="$(echo "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n 1 | tr -d '[:space:]')"
+    version="$(echo "$output" | grep -Eo '[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-fA-F]+' | head -n 1 | tr -d '[:space:]')"
     if [[ -z "$version" ]]; then
-        # Fallback: try the whole trimmed output
-        version="$(echo "$output" | tail -n 1 | tr -d '[:space:]')"
+        echo "unknown"
+    else
+        echo "$version"
     fi
-    echo "$version"
 }
 
 download_game() {
@@ -265,7 +289,7 @@ do_update() {
     fi
 
     # Stop server
-    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    stop_server
     sleep 2
 
     # Extract game.zip to temp directory
@@ -273,7 +297,7 @@ do_update() {
     extract_dir="$(mktemp -d "${SERVER_DIR}/.update_extract_XXXXXX")"
     if ! unzip -q "$GAME_ZIP" -d "$extract_dir" 2>/dev/null; then
         rm -rf "$extract_dir"
-        systemctl start "$SERVICE_NAME" 2>/dev/null || true
+        start_server
         json_error "game.zip konnte nicht entpackt werden"
     fi
 
@@ -350,7 +374,7 @@ do_update() {
     normalize_server_permissions
 
     # Start server
-    systemctl start "$SERVICE_NAME" 2>/dev/null || true
+    start_server
 
     json_output "$latest" "$latest" "false" "Update auf ${latest} erfolgreich"
 }

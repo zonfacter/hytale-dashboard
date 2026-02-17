@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.5.1] - 2026-02-17
+
+### Fixed
+- Update-Script: Fehlermeldungen des Downloaders wurden als Versionsnummer gespeichert, was zu falschem "Update verfuegbar"-Status fuehrte.
+- Dashboard: `get_version_info()` validiert jetzt, dass die gespeicherte Version dem erwarteten Format entspricht (`YYYY.MM.DD-hash`).
+
+### Docker Compatibility
+- Update-Script nutzt im Docker-Modus `docker stop/start` statt `systemctl`, das in Containern nicht verfuegbar ist.
+- `normalize_server_permissions` wird im Docker-Modus uebersprungen (Permissions werden ueber Host-Volume-Mounts gesteuert).
+
 ## [v1.5.0] - 2026-02-08
 
 ### Added

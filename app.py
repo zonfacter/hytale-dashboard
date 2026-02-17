@@ -869,6 +869,11 @@ def get_disk_usage() -> dict:
         return {"error": str(e)}
 
 
+def _looks_like_version(value: str) -> bool:
+    """Return True if *value* resembles a Hytale version string (e.g. 2026.02.06-aa1b071c2)."""
+    return bool(re.match(r"^\d{4}\.\d{2}\.\d{2}-[0-9a-fA-F]+$", value))
+
+
 def get_version_info() -> dict:
     """Read current and latest version from state files."""
     current = "unknown"
@@ -880,7 +885,9 @@ def get_version_info() -> dict:
         pass
     try:
         if LATEST_VERSION_FILE.exists():
-            latest = LATEST_VERSION_FILE.read_text().strip()
+            raw = LATEST_VERSION_FILE.read_text().strip()
+            if _looks_like_version(raw):
+                latest = raw
     except (PermissionError, OSError):
         pass
 
